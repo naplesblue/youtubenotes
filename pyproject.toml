@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ytbnotes"
+version = "0.1.0"
+description = "YoutubeNotes: Pipeline for downloading, analyzing, and syncing YouTube financial videos to Obsidian"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "yt-dlp",
+    "feedparser",
+    "pyyaml",
+    "dashscope",
+    "openai",
+    "funasr",
+    "torch",
+    "torchaudio",
+    "transformers",
+    # Add other required packages from old requirements.txt here
+]
+
+[project.scripts]
+ytbnotes-pipeline = "run_pipeline:main"

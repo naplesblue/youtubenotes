@@ -1,0 +1,116 @@
+# ytb-to-obsidian-bridge 配置示例
+# 复制此文件为 config.yaml 并根据需要修改
+
+version: "1.0.0"
+
+# ==================== 路径配置 (核心) ====================
+paths:
+  # 项目根目录 (可选，默认自动检测)
+  # 支持 ${PROJECT_ROOT} 占位符，将被替换为项目根目录
+  root: "${PROJECT_ROOT}"
+
+  # 分析输出目录 (Python 分析结果输出位置)
+  # 相对于 root 的路径，或绝对路径
+  analysis_output: "./data/results"
+
+  # Obsidian Vault 根目录
+  # 相对于 root 的路径，或绝对路径
+  # 可通过环境变量 OBSIDIAN_VAULT_DIR 覆盖
+  vault: "./obsidian_vault"
+
+  # 子目录路由 (可自定义文件夹名称)
+  # 键 = 内部类型标识
+  # 值 = Vault 中的实际文件夹名称
+  folders:
+    videos: "02-视频笔记"          # 视频分析笔记
+    transcripts: "05-完整转录"     # 完整时间线转录
+    price_levels: "03-价格水平"    # 价格水平追踪
+    people: "04-人物"              # 分析师/人物笔记
+    stock_overview: "01-股票概览"  # 股票概览笔记
+    index: "00-MOC-索引"           # 索引文件
+    templates: "./templates"       # 模板目录
+    cache: "./.cache"              # 缓存目录
+
+  # 示例: 英文文件夹命名
+  # folders:
+  #   videos: "02-Video-Notes"
+  #   price_levels: "03-Price-Levels"
+  #   people: "04-People"
+  #   stock_overview: "01-Stock-Overview"
+  #   index: "00-MOC"
+
+# ==================== 数据处理配置 ====================
+processing:
+  # 并发处理限制
+  max_concurrent: 3
+
+  # JSON 文件发现模式
+  json_pattern: "**/*.json"
+
+  # 排除模式 (不处理的文件)
+  exclude_patterns:
+    - "**/*_price_levels.json"  # 排除价格水平文件（由主文件生成）
+    - "**/.cache/**"
+
+  # ticker 映射清洗（可选）
+  # 用于把公司名/别名统一映射为合法代码，避免后续链路报错
+  # ticker_aliases:
+  #   CIRCLE: "CRCL"
+  ticker_aliases: {}
+
+  # 价格水平追加策略
+  # merge: 合并新数据与历史数据 (默认)
+  # replace: 完全替换历史数据
+  # skip: 如果文件存在则跳过
+  price_level_strategy: "merge"
+
+  # 是否启用原子文件写入 (推荐启用)
+  atomic_write: true
+
+  # 是否保留备份文件
+  keep_backups: false
+
+  # 备份文件保留天数 (如果启用备份)
+  backup_retention_days: 7
+
+# ==================== 笔记生成配置 ====================
+notes:
+  # Front Matter 规范版本
+  schema_version: "1.0.0"
+
+  # 自动生成的标签
+  auto_tags:
+    - "finance"
+    - "youtube-notes"
+
+  # 是否自动创建人物笔记
+  auto_create_people: true
+
+  # 是否自动创建股票概览笔记
+  auto_create_stock_overview: true
+
+  # 是否启用反向链接追踪
+  enable_backlinks: true
+
+# ==================== API 服务器配置 (Phase 3) ====================
+# 目前未启用，预留配置
+api:
+  enabled: false
+  host: "0.0.0.0"
+  port: 3000
+  api_key_required: true
+  cors_enabled: true
+
+# ==================== 日志配置 ====================
+logging:
+  # 日志级别: debug | info | warn | error
+  level: "info"
+
+# ==================== 环境变量覆盖说明 ====================
+# 以下环境变量可以覆盖此配置文件中的设置：
+#
+# OBSIDIAN_VAULT_DIR       - 覆盖 paths.vault
+# ANALYSIS_OUTPUT_DIR      - 覆盖 paths.analysis_output
+# LOG_LEVEL                - 覆盖 logging.level
+#
+# 建议在 .env.local 文件中设置这些变量（不提交到 Git）

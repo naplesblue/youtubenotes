@@ -1,0 +1,23 @@
+# 这是 YouTube RSS 订阅源配置示例
+# 请复制此文件并重命名为 channels.yaml，然后填入你想关注的频道
+
+- name: "示例财经频道 A"
+  url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCexample12345678"
+
+- name: "示例科技频道 B"
+  url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCexample87654321"
+
+#- name: "另一个新闻频道"
+#  url: "https://www.youtube.com/feeds/videos.xml?user=SomeUser"
+
+#- name: "学习频道"
+#  url: "https://www.youtube.com/feeds/videos.xml?playlist_id=PLyyyyyyyyyyyyyyyyyyyy"
+
+# ==========================================================
+# 注意: 请替换成你实际想关注的频道的 RSS 链接
+# 如何获取频道 RSS 链接:
+# 1. 打开 YouTube 频道主页。
+# 2. 查看网页源代码 (View Page Source)。
+# 3. 搜索 "rssUrl" 或 "feeds/videos.xml"。通常能找到类似上面的链接。
+# 4. 或者使用如 https://rss.app 等在线工具查找。
+# ==========================================================
