@@ -730,7 +730,7 @@ def main():
     for channel in channels:
         channel_name = channel.get('name', '未知频道')
         feed_url     = channel.get('url')
-        host         = channel.get('host')
+        host         = channel.get('host') or channel_name
 
         if not feed_url:
             logging.warning(f"跳过频道 '{channel_name}'，缺少 URL。")

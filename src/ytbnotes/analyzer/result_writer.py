@@ -199,7 +199,8 @@ def process_and_save_results(
     if mentioned_tickers_json and isinstance(mentioned_tickers_json, list):
         host_name = video_metadata.get('host')
         for td in mentioned_tickers_json:
-            # 如果配置了 host，则强行覆盖 LLM 提取的 analyst 以避免人物笔记混乱
+            # 强行覆盖 LLM 提取的 analyst 以避免人物笔记混乱
+            # host_name 在 downloader 阶段已保证兜底为 channel_name
             extracted_analyst = td.get("analyst", "unknown")
             final_analyst = host_name if host_name else extracted_analyst
             

@@ -189,11 +189,15 @@ class ObsidianSync:
             tickers = self.parser.extract_tickers(data)
             people  = self.parser.extract_people(data)
 
-            # 从 metadata 提取 host，如果没有则 fallback 到 mentioned_tickers 的 analyst，如果都没有才用 channel name
+            # 从 metadata 提取 host，downloader 已保证其至少回退到 channel_name
             meta = data.get("metadata", {}) if isinstance(data, dict) else {}
             host_name = meta.get("host")
+            channel_name = meta.get("channel", "未知频道")
             
-            # 从 mentioned_tickers 提取分析师名，补充到 people 列表 (也会用于找出核心人物)
+            # 如果极端情况 host 为空，兜底回 channel_name
+            primary_host = host_name if host_name else channel_name
+            
+            # 从 mentioned_tickers 提取分析师名，补充到 people 列表 (用于视频内展示)
             mentioned = data.get("mentioned_tickers", []) or []
             analyst_names = set()
             for t in (mentioned if isinstance(mentioned, list) else []):
@@ -203,15 +207,7 @@ class ObsidianSync:
                         analyst_names.add(a)
             
             # 核心人物（只为他们生成人物主页笔记）
-            core_analysts = []
-            if host_name:
-                core_analysts = [host_name]
-            elif analyst_names:
-                core_analysts = list(analyst_names)
-            else:
-                channel_name = meta.get("channel", "")
-                if channel_name:
-                    core_analysts = [channel_name]
+            core_analysts = [primary_host]
 
             # 合并：people_mentioned + analyst 去重 (用于视频内的展示)
             all_people = list(dict.fromkeys(people + sorted(analyst_names)))
@@ -220,7 +216,7 @@ class ObsidianSync:
             self._process_price_levels(video_id, data)
             self._process_stock_overview(video_id, data)
             
-            # **关键改动**：只对 core_analysts 生成独立的 人物.md，而不是所有的 all_people (比如提及了巴菲特不代表要建巴菲特的人物笔记)
+            # **关键改动**：只对 core_analysts 生成独立的 人物.md
             self._generate_people_notes(video_id, core_analysts, tickers)
             self._update_graph_index(video_id, data, tickers, core_analysts)
 
