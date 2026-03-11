@@ -2,17 +2,20 @@
 
 **YoutubeNotes** 是一款由 Python 编写的自动化 YouTube 财经视频信息提取与总结流水线。它可以监控指定的 YouTube 频道（通过 RSS），自动下载最新视频与音频，利用大语言模型（默认 Qwen）或本地语音识别（FunASR）生成结构化的摘要和图谱，并将结果直接无缝同步到本地的 Obsidian 知识库中。
 
-> 核心链路: `RSS 下载 -> 字幕抓取 (备用本地 ASR 转录) -> 大模型摘要及提取 -> Obsidian Vault 同步与双链生成`
+> 核心链路: `RSS 下载 (YouTube Data API 备用) -> 字幕优先抓取 (中/英文人工字幕) -> 本地 ASR 转录兜底 -> 大模型摘要及提取 -> Obsidian Vault 同步与双链生成`
 
 ---
 
 ## ✨ 核心特性
 
 - **🚀 全自动化端到端流水线**: `run_pipeline.py` 一键无缝触发从下载、分析、提取到 Obsidian 渲染的完整流水线。
-- **📺 智能下载调度**: 利用 `feedparser` 解析 YouTube RSS 提要，通过 `yt-dlp` 高效且稳定地拉取最新的视频数据。支持 Cookie 注入和反封锁规避策略。
-- **🤖 三级降级转录策略 (Transcript Mode)**: 
-  - 智能探测并提取最高质量的人工英文字幕。
-  - 不达标时，采用本地轻量级 ASR 模型 (`Fun-ASR-Nano`) 实现高精度 Fallback 时间线转录。
+- **📺 智能下载调度**: 利用 `feedparser` 解析 YouTube RSS 提要，通过 `yt-dlp` 高效地拉取最新视频。
+  - **RSS 稳定性回退**: YouTube RSS 提要偶发 404 或返回空数据。当检测到故障时，会自动切换至 **YouTube Data API v3**（需配置 `YOUTUBE_DATA_API_KEY`，可选但推荐申请）查询频道最新视频，保证下载流程不中断。
+  - 支持 Cookie 注入和反封锁规避策略。
+- **🤖 三级降级转录策略 (Transcript Mode)**:
+  - 优先探测并提取最高质量的**人工字幕**（支持英文 `en/en-US` 和中文 `zh-Hans/zh/zh-TW`，优先级可配置）。
+  - 中文字幕与英文字幕分别采用独立的质量门（中文检测 `zh_ratio`，英文检测 `english_ratio`），确保语言判断准确不误杀。
+  - 字幕不可用或质量不达标时，自动回退至本地轻量级 ASR 模型 (`Fun-ASR-Nano`) 实现高精度时间线转录。
   - 支持超长音频 Chunk 分块与多进程调度加速。
 - **🧠 结构化数据提取**: 借助 `Qwen-Plus`（兼容 OpenAI API）大语言模型：
   - 提取关键带时间戳摘要
@@ -73,6 +76,10 @@ YoutubeNotes/
 │       └── sync/            # 转换本地输出，构建 Obsidian Markdown 文件和双链
 │
 ├── tools/                   # 独立功能及运维辅助脚本
+│   ├── youtube_rss.py       # 通过单个视频链接反查频道 RSS 地址（用于 channels.yaml 配置）
+│   ├── extract_cookies.py   # 从 Chrome 导出 YouTube 登录 Cookie 为 yt-dlp 可用的 Netscape 格式
+│   ├── backfill_json.py     # 将历史 Markdown 笔记中的 brief_text / raw_transcript 回填到对应 JSON（dry-run 模式默认安全）
+│   └── migrate_notes.py     # 一次性迁移脚本：将旧版 Obsidian 平铺视频笔记重整为按频道分目录 + 简报/转录分离的新结构
 ├── docs/                    # 分类说明文档
 └── data/                    # (运行时产生) JSON数据库、中间音频与分析摘要
 ```
