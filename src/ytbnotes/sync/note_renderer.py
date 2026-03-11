@@ -393,6 +393,7 @@ class NoteRenderer:
         videos  = videos_appeared or []
         slug    = person.lower().replace(" ", "-")
         video_folder = self._get_folder_name("videos", "02-视频笔记")
+        stock_folder = self._get_folder_name("stock_overview", "01-股票概览")
 
         fm_data = {
             "id":               f"person-{slug}",
@@ -405,9 +406,6 @@ class NoteRenderer:
             "tickers_mentioned": tickers,
             "videos_appeared":   videos,
         }
-
-        videos_list  = "\n".join(f"- [[{v}]]" for v in videos) or "- 暂无记录"
-        tickers_list = "\n".join(f"- [[{t}]]" for t in tickers) or "- 暂无记录"
 
         return self.build_front_matter(fm_data) + f"""
 # {person}
@@ -433,19 +431,14 @@ SORT source.published DESC
 
 ```dataview
 TABLE WITHOUT ID
-  mentioned_tickers.analyst as "分析师",
-  mentioned_tickers.ticker as "标的",
-  mentioned_tickers.sentiment as "情绪"
+  link("{stock_folder}/" + mentioned_tickers.ticker, mentioned_tickers.ticker) as "标的",
+  choice(contains(mentioned_tickers.sentiment, "bullish"), "🟢 偏多", choice(contains(mentioned_tickers.sentiment, "bearish"), "🔴 偏空", "🟡 中性")) as "情绪"
 FROM "{video_folder}"
 WHERE contains(people_mentioned, "{person}")
 FLATTEN mentioned_tickers
 WHERE mentioned_tickers.analyst = "{person}"
 SORT source.published DESC
 ```
-
-## 🔗 相关公司/标的
-
-{tickers_list}
 """
 
     # ── MOC ───────────────────────────────────────────────────────────────────
