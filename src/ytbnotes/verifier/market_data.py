@@ -1,0 +1,132 @@
+"""
+行情数据拉取与缓存
+
+使用 yfinance 获取美股日K数据，按 {TICKER}_{年}.json 缓存在本地。
+"""
+
+import json
+import logging
+import datetime
+from pathlib import Path
+from typing import Optional
+
+_PROJECT_DIR = Path(__file__).resolve().parent.parent.parent.parent
+DEFAULT_CACHE_DIR = _PROJECT_DIR / "data" / "opinions" / "market_cache"
+
+
+def _cache_path(ticker: str, year: int, cache_dir: Path | None = None) -> Path:
+    d = cache_dir or DEFAULT_CACHE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{ticker.upper()}_{year}.json"
+
+
+def _load_cache(ticker: str, year: int, cache_dir: Path | None = None) -> dict:
+    """加载缓存的日K数据。返回 {date_str: {open, high, low, close, volume}}。"""
+    fp = _cache_path(ticker, year, cache_dir)
+    if not fp.exists():
+        return {}
+    try:
+        return json.loads(fp.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_cache(ticker: str, year: int, data: dict, cache_dir: Path | None = None) -> None:
+    fp = _cache_path(ticker, year, cache_dir)
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def fetch_price_history(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    cache_dir: Path | None = None,
+) -> dict[str, dict]:
+    """
+    获取日K数据。优先从缓存读取，缺失时增量拉取。
+    返回 {date_str: {"open": float, "high": float, "low": float, "close": float}}
+    """
+    try:
+        import yfinance as yf
+    except ImportError:
+        logging.error("yfinance 未安装，请执行: pip install yfinance")
+        return {}
+
+    start_dt = datetime.date.fromisoformat(start_date)
+    end_dt = datetime.date.fromisoformat(end_date)
+
+    # 收集涉及的年份
+    years = set()
+    d = start_dt
+    while d <= end_dt:
+        years.add(d.year)
+        d = d.replace(year=d.year + 1, month=1, day=1) if d.month == 12 and d.day == 31 else d + datetime.timedelta(days=365)
+    years.add(end_dt.year)
+
+    # 合并缓存
+    merged: dict[str, dict] = {}
+    for y in years:
+        merged.update(_load_cache(ticker, y, cache_dir))
+
+    # 检查是否缺数据
+    need_fetch = False
+    if not merged:
+        need_fetch = True
+    else:
+        cached_dates = sorted(merged.keys())
+        if cached_dates[-1] < end_date:
+            need_fetch = True
+
+    if need_fetch:
+        logging.debug(f"yfinance: 拉取 {ticker} {start_date} → {end_date}")
+        try:
+            # 多取一天以确保包含 end_date
+            fetch_end = (end_dt + datetime.timedelta(days=3)).isoformat()
+            df = yf.download(
+                ticker,
+                start=start_date,
+                end=fetch_end,
+                progress=False,
+                auto_adjust=True,
+            )
+            if df is not None and not df.empty:
+                for idx, row in df.iterrows():
+                    date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
+                    merged[date_str] = {
+                        "open": round(float(row["Open"].iloc[0]) if hasattr(row["Open"], 'iloc') else float(row["Open"]), 2),
+                        "high": round(float(row["High"].iloc[0]) if hasattr(row["High"], 'iloc') else float(row["High"]), 2),
+                        "low": round(float(row["Low"].iloc[0]) if hasattr(row["Low"], 'iloc') else float(row["Low"]), 2),
+                        "close": round(float(row["Close"].iloc[0]) if hasattr(row["Close"], 'iloc') else float(row["Close"]), 2),
+                    }
+                # 按年份分别存缓存
+                by_year: dict[int, dict] = {}
+                for ds, vals in merged.items():
+                    y = int(ds[:4])
+                    by_year.setdefault(y, {})[ds] = vals
+                for y, ydata in by_year.items():
+                    _save_cache(ticker, y, ydata, cache_dir)
+                logging.debug(f"yfinance: {ticker} 获得 {len(df)} 条日K数据")
+        except Exception as e:
+            logging.error(f"yfinance 拉取 {ticker} 失败: {e}")
+
+    # 过滤到指定区间
+    return {
+        ds: vals for ds, vals in sorted(merged.items())
+        if start_date <= ds <= end_date
+    }
+
+
+def get_price_on_date(ticker: str, date: str, cache_dir: Path | None = None) -> Optional[float]:
+    """获取某日收盘价。如该日无数据（休市），找最近前一个交易日。"""
+    dt = datetime.date.fromisoformat(date)
+    # 往前找最多 7 天
+    start = (dt - datetime.timedelta(days=7)).isoformat()
+    history = fetch_price_history(ticker, start, date, cache_dir)
+    if not history:
+        return None
+    # 取 <= date 的最新一天
+    candidates = sorted([d for d in history.keys() if d <= date])
+    if not candidates:
+        return None
+    return history[candidates[-1]]["close"]
