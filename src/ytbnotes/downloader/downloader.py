@@ -7,6 +7,7 @@ import logging
 import datetime
 import time
 import tempfile
+import requests
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
@@ -76,6 +77,9 @@ LATEST_PER_CHANNEL   = 1
 CLEANUP_DOWNLOAD_FILES = os.getenv("YTDLP_CLEANUP_DOWNLOAD_FILES", "1").strip().lower() in {
     "1", "true", "yes", "on"
 }
+
+# YouTube Data API Key（用于 RSS 失败时的回退查询）
+YOUTUBE_DATA_API_KEY = os.getenv("YOUTUBE_DATA_API_KEY", "").strip()
 
 # =============================================================================
 # 日志
@@ -398,6 +402,7 @@ def get_videos_from_rss(feed_url: str, max_entries: int = DEFAULT_MAX_ENTRIES) -
     """
     从 RSS Feed 获取最新的多个视频条目。
     max_entries 防止单次处理过多；可在 channels.yaml 的频道条目里单独配置。
+    失败时返回空列表（调用方可触发 YouTube Data API 回退）。
     """
     try:
         logging.info(f"正在解析 Feed: {feed_url}")
@@ -416,6 +421,79 @@ def get_videos_from_rss(feed_url: str, max_entries: int = DEFAULT_MAX_ENTRIES) -
     except Exception as e:
         logging.error(f"获取或解析 Feed '{feed_url}' 失败: {e}")
         return []
+
+# =============================================================================
+# YouTube Data API 回退（RSS 失败时使用）
+# =============================================================================
+
+def _extract_channel_id_from_feed_url(feed_url: str) -> str | None:
+    """从 YouTube RSS feed URL 中提取 channel_id 参数。"""
+    try:
+        qs = parse_qs(urlparse(feed_url).query)
+        ids = qs.get("channel_id")
+        if ids and ids[0].startswith("UC"):
+            return ids[0]
+    except Exception:
+        pass
+    return None
+
+
+def fetch_latest_video_from_api(
+    channel_id: str,
+    api_key: str,
+    timeout: int = 15,
+) -> dict | None:
+    """
+    使用 YouTube Data API v3 查询频道最新上传视频。
+    两步：channels.list → playlistItems.list。
+    成功返回 {'video_id', 'title', 'published_at', 'url'}，失败返回 None。
+    """
+    base = "https://www.googleapis.com/youtube/v3"
+    try:
+        # Step 1: 获取 uploads 播放列表 ID
+        r = requests.get(
+            f"{base}/channels",
+            params={"part": "contentDetails", "id": channel_id, "key": api_key},
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if not items:
+            logging.warning(f"YouTube Data API: 未找到频道 {channel_id}")
+            return None
+        uploads_id = items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+        # Step 2: 取播放列表第一条（最新上传）
+        r2 = requests.get(
+            f"{base}/playlistItems",
+            params={
+                "part": "snippet,contentDetails",
+                "playlistId": uploads_id,
+                "maxResults": 1,
+                "key": api_key,
+            },
+            timeout=timeout,
+        )
+        r2.raise_for_status()
+        video_items = r2.json().get("items", [])
+        if not video_items:
+            logging.warning(f"YouTube Data API: 频道 {channel_id} 上传列表为空")
+            return None
+
+        snippet = video_items[0]["snippet"]
+        video_id = snippet["resourceId"]["videoId"]
+        return {
+            "video_id":     video_id,
+            "title":        snippet.get("title", "无标题"),
+            "published_at": snippet.get("publishedAt"),
+            "url":          f"https://www.youtube.com/watch?v={video_id}",
+        }
+    except requests.RequestException as e:
+        logging.error(f"YouTube Data API 请求失败 (channel={channel_id}): {e}")
+        return None
+    except Exception as e:
+        logging.error(f"YouTube Data API 回退异常 (channel={channel_id}): {e}")
+        return None
 
 # =============================================================================
 # 视频 ID 提取
@@ -661,8 +739,49 @@ def main():
 
         entries = get_videos_from_rss(feed_url, max_entries=LATEST_PER_CHANNEL)
         if not entries:
-            logging.warning(f"未能从频道 '{channel_name}' 获取视频信息。")
-            continue
+            # --- YouTube Data API 回退 ---
+            # channel_id 优先从频道配置里取，其次从 RSS URL 中解析
+            channel_id = channel.get("channel_id") or _extract_channel_id_from_feed_url(feed_url)
+            if channel_id and YOUTUBE_DATA_API_KEY:
+                logging.warning(
+                    f"RSS 获取失败，尝试 YouTube Data API 回退 (channel_id={channel_id})…"
+                )
+                api_result = fetch_latest_video_from_api(channel_id, YOUTUBE_DATA_API_KEY)
+                if api_result:
+                    # 构造与 feedparser 条目兼容的仿真 entry
+                    pub_str = api_result.get("published_at") or ""
+                    try:
+                        pub_dt = datetime.datetime.fromisoformat(
+                            pub_str.replace("Z", "+00:00")
+                        ).replace(tzinfo=None)
+                    except Exception:
+                        pub_dt = None
+                    entries = [{
+                        "link":  api_result["url"],
+                        "title": api_result["title"],
+                        "published": pub_str,
+                        "published_parsed": pub_dt.timetuple() if pub_dt else None,
+                        "_source": "youtube_data_api",
+                    }]
+                    logging.info(
+                        f"YouTube Data API 回退成功: 最新视频 '{api_result['title']}' "
+                        f"(ID={api_result['video_id']})"
+                    )
+                else:
+                    logging.error(
+                        f"YouTube Data API 回退也失败，跳过频道 '{channel_name}'。"
+                    )
+                    continue
+            elif not YOUTUBE_DATA_API_KEY:
+                logging.warning(
+                    f"未配置 YOUTUBE_DATA_API_KEY，无法回退，跳过频道 '{channel_name}'。"
+                )
+                continue
+            else:
+                logging.warning(
+                    f"无法从 Feed URL 提取 channel_id，无法回退，跳过频道 '{channel_name}'。"
+                )
+                continue
 
         # 固定只看该频道 RSS 最新一条
         entry = entries[0]

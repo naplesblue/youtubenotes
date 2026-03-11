@@ -3,6 +3,10 @@
 
 - name: "示例财经频道 A"
   url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCexample12345678"
+  # channel_id 是可选字段。如果 RSS 订阅出现 404 或返回空数据，
+  # 且配置了 YOUTUBE_DATA_API_KEY，会自动用 YouTube Data API 查询最新视频作为回退。
+  # 如果 url 中已有 channel_id=UC... 参数，则不需要单独填写此字段。
+  channel_id: UCexample12345678
 
 - name: "示例科技频道 B"
   url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCexample87654321"
