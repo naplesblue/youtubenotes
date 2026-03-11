@@ -16,6 +16,7 @@ Obsidian Sync Bridge — Python 重写版
 import json
 import re
 import sys
+import yaml
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -59,7 +60,10 @@ class ObsidianSync:
 
         # MOC 仪表盘数据收集
         self._moc_ticker_agg: dict[str, dict] = {}   # ticker -> {count, sentiments, channels}
-        self._moc_videos: list[dict] = []              # [{video_id, channel, title, date, tickers}]
+        self._moc_videos: list[dict] = []            # [{video_id, channel, title, date, tickers}]
+
+        # 频道 host 映射 (用于兼容缺少 host 字段的历史数据)
+        self.channel_to_host: dict[str, str] = {}
 
     # ── 初始化 ────────────────────────────────────────────────────────────────
 
@@ -97,6 +101,9 @@ class ObsidianSync:
         # 5. 统一预建所有输出目录（避免每次写入时重复检查）
         for folder_type in ("videos", "transcripts", "price_levels", "people", "stock_overview", "index"):
             self.storage.ensure_dir(self.path_resolver.get_folder(folder_type))
+
+        # 6. 加载 channels.yaml 建立向前兼容的 host 映射
+        self._load_channels_host_map()
 
         print("✅ 配置系统初始化完成")
         print(f"   Vault 目录: {self.path_resolver.get_vault_root()}")
@@ -137,8 +144,25 @@ class ObsidianSync:
             if not _TICKER_RE.match(val):
                 print(f"  ⚠️  忽略非法 ticker 映射: {raw_key} -> {raw_val}")
                 continue
-            merged[key] = val
         return merged
+
+    def _load_channels_host_map(self) -> None:
+        """加载 channels.yaml，构建 channel_name -> host 的映射字典，用于兼容历史数据。"""
+        channels_file = Path(self.config_loader._project_root) / "channels.yaml"
+        if not channels_file.exists():
+            return
+            
+        try:
+            with open(channels_file, "r", encoding="utf-8") as f:
+                channels_data = yaml.safe_load(f) or []
+            
+            for ch in channels_data:
+                name = ch.get("name")
+                host = ch.get("host")
+                if name and host:
+                    self.channel_to_host[name] = host
+        except Exception as e:
+            print(f"  ⚠️  加载 channels.yaml 失败: {e}")
 
     # ── 主流程 ────────────────────────────────────────────────────────────────
 
@@ -189,12 +213,17 @@ class ObsidianSync:
             tickers = self.parser.extract_tickers(data)
             people  = self.parser.extract_people(data)
 
-            # 从 metadata 提取 host，downloader 已保证其至少回退到 channel_name
+            # 从 metadata 提取 host 和 channel_name
             meta = data.get("metadata", {}) if isinstance(data, dict) else {}
             host_name = meta.get("host")
             channel_name = meta.get("channel", "未知频道")
             
-            # 如果极端情况 host 为空，兜底回 channel_name
+            # 【兼容历史数据优化】
+            # 如果 JSON 数据没有 host 字段（旧数据），自动去 channels.yaml() 映射表里找
+            if not host_name and channel_name in self.channel_to_host:
+                host_name = self.channel_to_host[channel_name]
+
+            # 兜底回 channel_name
             primary_host = host_name if host_name else channel_name
             
             # 从 mentioned_tickers 提取分析师名，补充到 people 列表 (用于视频内展示)
