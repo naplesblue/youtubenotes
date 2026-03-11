@@ -182,6 +182,7 @@ def process_and_save_results(
         "metadata": {
             "title":       video_metadata.get('title', '无标题'),
             "channel":     video_metadata.get('channel_name', '未知频道'),
+            "host":        video_metadata.get('host'),
             "video_id":    video_id,
             "youtube_url": video_metadata.get('original_url', ''),
             "date":        video_metadata.get('upload_date', ''),
@@ -196,12 +197,17 @@ def process_and_save_results(
     }
 
     if mentioned_tickers_json and isinstance(mentioned_tickers_json, list):
+        host_name = video_metadata.get('host')
         for td in mentioned_tickers_json:
+            # 如果配置了 host，则强行覆盖 LLM 提取的 analyst 以避免人物笔记混乱
+            extracted_analyst = td.get("analyst", "unknown")
+            final_analyst = host_name if host_name else extracted_analyst
+            
             structured_data["mentioned_tickers"].append({
-                "ticker":       td.get("ticker", ""),
-                "company_name": td.get("company_name", ""),
+                "ticker":       td.get("ticker", "UNKNOWN"),
+                "company_name": td.get("company_name", "Unknown"),
                 "sentiment":    td.get("sentiment", "neutral"),
-                "analyst":      td.get("analyst", "unknown"),
+                "analyst":      final_analyst,
                 "price_levels": td.get("price_levels", []),
             })
     elif price_levels_json and isinstance(price_levels_json, list):

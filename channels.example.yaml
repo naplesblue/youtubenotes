@@ -10,6 +10,7 @@
 
 - name: "示例科技频道 B"
   url: "https://www.youtube.com/feeds/videos.xml?channel_id=UCexample87654321"
+  host: "科技小明"
 
 #- name: "另一个新闻频道"
 #  url: "https://www.youtube.com/feeds/videos.xml?user=SomeUser"

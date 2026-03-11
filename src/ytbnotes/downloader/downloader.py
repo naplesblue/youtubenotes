@@ -730,6 +730,7 @@ def main():
     for channel in channels:
         channel_name = channel.get('name', '未知频道')
         feed_url     = channel.get('url')
+        host         = channel.get('host')
 
         if not feed_url:
             logging.warning(f"跳过频道 '{channel_name}'，缺少 URL。")
@@ -827,6 +828,7 @@ def main():
             tracking_data[feed_url] = {
                 video_id: {
                     "channel_name":  channel_name,
+                    "host":          host,
                     "file_path":     relative_filepath,
                     "download_time": datetime.datetime.now().isoformat(),
                     "published_time": published_dt.isoformat() if published_dt else None,

@@ -23,7 +23,7 @@ class Parser:
         self.path_resolver: PathResolver = opts["pathResolver"]
         self.json_pattern: str = opts.get("jsonPattern", "**/*.json")
         self.exclude_patterns: list[str] = opts.get(
-            "excludePatterns", ["**/*_price_levels.json", "**/*_levels.json"]
+            "excludePatterns", ["**/*_price_levels.json", "**/*_levels.json", "**/*_opinions.json"]
         )
 
     # ── 文件发现 ──────────────────────────────────────────────────────────────
@@ -47,8 +47,8 @@ class Parser:
                 if fnmatch(rel_str, pattern):
                     return True
 
-            # 排除点位数据文件
-            if name.endswith("_price_levels.json") or name.endswith("_levels.json"):
+            # 排除点位数据文件和观点数据文件
+            if name.endswith("_price_levels.json") or name.endswith("_levels.json") or name.endswith("_opinions.json"):
                 return True
             # 排除缓存目录
             if ".cache" in p.parts:

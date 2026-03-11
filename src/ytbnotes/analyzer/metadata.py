@@ -110,6 +110,7 @@ def get_video_metadata(video_path_str, history_data):
                         return {
                             "title":        details.get("title", title_fallback),
                             "channel_name": details.get("channel_name", channel_from_path),
+                            "host":         details.get("host"),
                             "video_id":     vid,
                             "original_url": details.get("original_url"),
                             "upload_date":  details.get("upload_date", str(upload_date) if upload_date else None),
@@ -121,6 +122,7 @@ def get_video_metadata(video_path_str, history_data):
     return {
         "title":        title_fallback,
         "channel_name": channel_from_path,
+        "host":         None,
         "video_id":     video_id_fallback or "unknown_id",
         "original_url": None,
         "upload_date":  str(upload_date) if upload_date else None,
