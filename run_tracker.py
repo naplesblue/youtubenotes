@@ -74,9 +74,10 @@ def cmd_verify(args):
 
 
 def cmd_report(args):
-    """显示博主胜率排行 + 个股共识。"""
+    """显示博主胜率排行 + 个股共识 + 写入 Obsidian 仪表盘。"""
     from src.ytbnotes.tracker.opinion_store import load_opinions
     from src.ytbnotes.verifier.scorer import compute_blogger_profiles, compute_ticker_consensus, print_summary
+    from src.ytbnotes.verifier.dashboard import write_dashboard_to_vault
 
     opinions = load_opinions()
     if not opinions:
@@ -98,6 +99,19 @@ def cmd_report(args):
         json.dumps(consensus, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"📁 报告已保存到 {report_dir}/")
+
+    # 写入 Obsidian 仪表盘
+    dashboard_path = write_dashboard_to_vault(
+        opinions=opinions,
+        profiles=profiles,
+        consensus=consensus,
+        config_path=PROJECT_DIR / "config.yaml",
+    )
+    if dashboard_path:
+        print(f"📓 Obsidian 仪表盘已更新: {dashboard_path}")
+    else:
+        print("⚠️ Obsidian 仪表盘写入失败（请检查 config.yaml 中的 vault_root 和 folders.index 配置）")
+
 
 
 def cmd_all(args):
