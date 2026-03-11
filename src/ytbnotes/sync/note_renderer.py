@@ -320,9 +320,10 @@ class NoteRenderer:
             lines.append("|------|------|----------|--------|------|")
             for lv in group:
                 ctx = str(lv.get("context", "")).replace("|", "\\|")[:30]
+                safe_video_link = str(lv.get("source_video", "")).replace("|", "\\|")
                 lines.append(
                     f"| {lv.get('level')} | {lv.get('date_added')} "
-                    f"| {lv.get('source_video')} | {lv.get('analyst')} | {ctx} |"
+                    f"| {safe_video_link} | {lv.get('analyst')} | {ctx} |"
                 )
             lines.append("")
 
