@@ -427,17 +427,51 @@ SORT source.published DESC
 
 ## 📈 该分析师关注的标的
 
-> 汇总 [[{person}]] 分析过的所有股票
+> 汇总 [[{person}]] 分析过的所有股票及情绪偏向
 
-```dataview
-TABLE WITHOUT ID
-  link("{stock_folder}/" + mentioned_tickers.ticker, mentioned_tickers.ticker) as "标的",
-  choice(contains(mentioned_tickers.sentiment, "bullish"), "🟢 偏多", choice(contains(mentioned_tickers.sentiment, "bearish"), "🔴 偏空", "🟡 中性")) as "情绪"
-FROM "{video_folder}"
-WHERE contains(people_mentioned, "{person}")
-FLATTEN mentioned_tickers
-WHERE mentioned_tickers.analyst = "{person}"
-SORT source.published DESC
+```dataviewjs
+const person = "{person}";
+const stockFolder = "{stock_folder}";
+const pages = dv.pages('"{video_folder}"')
+  .where(p => p.people_mentioned && p.people_mentioned.includes(person));
+
+const agg = {{}};
+
+for (let p of pages) {{
+    if (!p.mentioned_tickers) continue;
+    for (let t of p.mentioned_tickers) {{
+        if (t.analyst !== person) continue;
+        if (!agg[t.ticker]) {{
+            agg[t.ticker] = {{
+                company: t.company || "",
+                bullish: 0,
+                bearish: 0,
+                neutral: 0
+            }};
+        }}
+        let s = (t.sentiment || "neutral").toLowerCase();
+        if (s.includes("bull")) agg[t.ticker].bullish++;
+        else if (s.includes("bear")) agg[t.ticker].bearish++;
+        else agg[t.ticker].neutral++;
+    }}
+}}
+
+const rows = [];
+for (let ticker of Object.keys(agg).sort()) {{
+    let d = agg[ticker];
+    let bar = "🟢".repeat(d.bullish) + "🔴".repeat(d.bearish) + "⚪".repeat(d.neutral);
+    if (!bar) bar = "—";
+    rows.push([
+        `[[${{stockFolder}}/${{ticker}}|${{ticker}}]]`,
+        d.company,
+        d.bullish,
+        d.bearish,
+        d.neutral,
+        bar
+    ]);
+}}
+
+dv.paragraph(dv.markdownTable(["个股", "公司", "看多", "看空", "观望", "情绪分布"], rows));
 ```
 """
 
