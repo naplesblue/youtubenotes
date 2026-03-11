@@ -226,20 +226,21 @@ class ObsidianSync:
             # 兜底回 channel_name
             primary_host = host_name if host_name else channel_name
             
-            # 从 mentioned_tickers 提取分析师名，补充到 people 列表 (用于视频内展示)
+            # 【向后兼容】强行覆盖旧 JSON 中的 analyst，确保视频 frontmatter 里也是对的主播
             mentioned = data.get("mentioned_tickers", []) or []
             analyst_names = set()
             for t in (mentioned if isinstance(mentioned, list) else []):
                 if isinstance(t, dict):
+                    t["analyst"] = primary_host
                     a = str(t.get("analyst", "")).strip()
                     if a and a.lower() not in ("unknown", "n/a", ""):
                         analyst_names.add(a)
-            
+
             # 核心人物（只为他们生成人物主页笔记）
             core_analysts = [primary_host]
 
-            # 合并：people_mentioned + analyst 去重 (用于视频内的展示)
-            all_people = list(dict.fromkeys(people + sorted(analyst_names)))
+            # 合并：确保 primary_host 包含在 all_people 中，这样视频内才会产生对应的 tag，触发 Dataview 查询
+            all_people = list(dict.fromkeys([primary_host] + people + sorted(analyst_names)))
 
             self._generate_linked_video_and_transcript_notes(video_id, data, json_path, all_people)
             self._process_price_levels(video_id, data)

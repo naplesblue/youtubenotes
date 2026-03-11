@@ -416,10 +416,6 @@ class NoteRenderer:
 
 <!-- 待补充 -->
 
-## 🎥 相关视频分析
-
-{videos_list}
-
 ## 📊 该分析师的所有视频 (Dataview)
 
 > 动态展示 [[{person}]] 参与分析的所有视频
