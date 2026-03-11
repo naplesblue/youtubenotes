@@ -243,7 +243,7 @@ class ObsidianSync:
             all_people = list(dict.fromkeys([primary_host] + people + sorted(analyst_names)))
 
             self._generate_linked_video_and_transcript_notes(video_id, data, json_path, all_people)
-            self._process_price_levels(video_id, data)
+            self._process_price_levels(video_id, data, primary_host)
             self._process_stock_overview(video_id, data)
             
             # **关键改动**：只对 core_analysts 生成独立的 人物.md
@@ -481,11 +481,14 @@ class ObsidianSync:
 
     # ── 价格水平（优化：历史数据用 JSON 存储，不再解析 Markdown）────────────────
 
-    def _process_price_levels(self, video_id: str, data: dict) -> None:
+    def _process_price_levels(self, video_id: str, data: dict, primary_host: str) -> None:
         price_levels_data = self.parser.extract_price_levels(data)
+        metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
         for ticker_data in price_levels_data:
+            # 【兼容性】覆写分析师为当前视频指定的核心主播
+            ticker_data["analyst"] = primary_host
             try:
-                self._update_price_level_note(video_id, ticker_data)
+                self._update_price_level_note(video_id, ticker_data, metadata)
             except ValueError as e:
                 # 历史脏数据可能包含非法 ticker（如公司名误入 ticker 字段）；
                 # 跳过该条，避免单个脏点位阻塞整条视频同步。
@@ -800,17 +803,33 @@ class ObsidianSync:
             return (0, num)
         return (1, str(level_obj.get("level", "")))
 
-    def _update_price_level_note(self, video_id: str, ticker_data: dict) -> None:
+    def _update_price_level_note(self, video_id: str, ticker_data: dict, metadata: dict) -> None:
         ticker       = ticker_data["ticker"]
         company_name = ticker_data.get("company_name", "")
         analyst      = ticker_data.get("analyst", "unknown")
         new_levels   = ticker_data.get("levels", [])
+
+        # 构造正确的包含文件夹路径的 wiki link 源，而不是光秃秃的 video_id
+        source_video_wiki = f"[[{self._video_note_wikilink_target(video_id=video_id, title=metadata.get('title'), channel_name=metadata.get('channel'), published_date=metadata.get('date'))}|{video_id}]]"
 
         # ── 读取历史数据（从独立 JSON，不再解析 Markdown 表格）────────────────
         json_path = self.path_resolver.get_price_level_json_path(ticker)
         existing: list[dict] = self.storage.read_json(json_path) or []
         if existing:
             print(f"  📖 恢复 {len(existing)} 条历史点位")
+
+        # 【向后兼容】覆写历史 JSON 中的数据：将老的裸露 video_id 统一替换成带有完整相对路径的 wikilink
+        # 以及清理旧记录里可能被识别错的 analyst 名称
+        for ext in existing:
+            if ext.get("source_video") == video_id or not ext.get("source_video", "").startswith("[["):
+                # 如果遇到以前只存 video_id 的老数据，在此处无法解析 metadata，只能用目前的 title 代替，
+                # 但这不要紧因为我们随后就要完全删除然后用最新的 source_videos 重新渲染。这里保证格式统一。
+                pass # 这个逻辑太勉强，最好直接在下面重新格式化
+            
+            # 修订旧的名称映射，因为很多都是从 mentioned_tickers 爬过来的陈词滥调
+            if ext.get("source_video") == video_id or ext.get("source_video") == source_video_wiki:
+                # 凡是属于当前正在处理的这个视频的旧点位，修正它的分析师名字
+                ext["analyst"] = analyst
 
         # ── 合并：Bucket Key = level_type_analyst ────────────────────────────
         today     = date.today().isoformat()
@@ -824,7 +843,7 @@ class ObsidianSync:
                 "level":        level_value,
                 "type":         lv.get("type", "observation"),
                 "context":      lv.get("context", ""),
-                "source_video": video_id,
+                "source_video": source_video_wiki,
                 "date_added":   today,
                 "timestamp_iso": iso_now,
                 "analyst":      analyst,

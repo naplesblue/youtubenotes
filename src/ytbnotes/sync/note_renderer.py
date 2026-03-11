@@ -322,7 +322,7 @@ class NoteRenderer:
                 ctx = str(lv.get("context", "")).replace("|", "\\|")[:30]
                 lines.append(
                     f"| {lv.get('level')} | {lv.get('date_added')} "
-                    f"| [[{lv.get('source_video')}]] | {lv.get('analyst')} | {ctx} |"
+                    f"| {lv.get('source_video')} | {lv.get('analyst')} | {ctx} |"
                 )
             lines.append("")
 
@@ -332,7 +332,7 @@ class NoteRenderer:
         for lv in chrono[:20]:
             lines.append(
                 f"- **{lv.get('date_added')}** | {lv.get('level')} {lv.get('type')} "
-                f"| [[{lv.get('source_video')}]] | {lv.get('analyst')}"
+                f"| {lv.get('source_video')} | {lv.get('analyst')}"
             )
         if len(chrono) > 20:
             lines.append(f"- ... 还有 {len(chrono) - 20} 条记录")
@@ -348,7 +348,7 @@ class NoteRenderer:
         lines.append("## 🔗 相关笔记\n")
         lines.append(f"- [[{ticker}]] - 公司概览")
         for vid in source_videos[:10]:
-            lines.append(f"- [[{vid}]] - 来源视频")
+            lines.append(f"- {vid} - 来源视频")
         lines.append("")
 
         # Dataview
