@@ -16,7 +16,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from .models import Opinion, Prediction, Verification, make_opinion_id
+from .models import (
+    Opinion,
+    Prediction,
+    Verification,
+    make_opinion_id,
+    PREDICTION_TYPES,
+    DIRECTIONS,
+    CONFIDENCES,
+    CONVICTIONS,
+    HORIZONS,
+)
 
 # ─── Cerebras 配置 ───
 CEREBRAS_API_KEY  = os.getenv("CEREBRAS_API_KEY", "").strip()
@@ -155,6 +165,178 @@ def _parse_json_response(text: str) -> list | None:
     return None
 
 
+def _to_optional_float(value) -> float | None:
+    """尽量把输入转为 float，失败返回 None。"""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        if not cleaned:
+            return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_enum(value, allowed: set[str], default: str) -> str:
+    """标准化枚举值（大小写不敏感）。"""
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    return normalized if normalized in allowed else default
+
+
+def _normalize_direction(direction, sentiment) -> str:
+    """标准化方向字段；缺失时根据 sentiment 推断。"""
+    direct = _normalize_enum(direction, DIRECTIONS, "")
+    if direct:
+        return direct
+    sent = str(sentiment or "").strip().lower()
+    if sent == "bullish":
+        return "long"
+    if sent == "bearish":
+        return "short"
+    return "hold"
+
+
+def _normalize_prediction_type(level_type, has_price: bool) -> str:
+    """把价格层级 type 映射到 Prediction.type。"""
+    normalized = str(level_type or "").strip().lower()
+    alias = {
+        "target": "target_price",
+        "tp": "target_price",
+        "entry": "entry_zone",
+        "buy_zone": "entry_zone",
+        "pressure": "resistance",
+        "stop": "stop_loss",
+        "stoploss": "stop_loss",
+    }
+    mapped = alias.get(normalized, normalized)
+    if mapped in PREDICTION_TYPES:
+        return mapped
+    return "reference_only" if has_price else "direction_call"
+
+
+def _has_direct_prediction_fields(mentioned_tickers: list) -> bool:
+    """
+    判断 mentioned_tickers 是否已具备直出预测字段：
+    direction/confidence/horizon/conviction。
+    """
+    required = {"direction", "confidence", "horizon", "conviction"}
+    if not isinstance(mentioned_tickers, list) or not mentioned_tickers:
+        return False
+    dict_items = [x for x in mentioned_tickers if isinstance(x, dict)]
+    if not dict_items:
+        return False
+    return all(required.issubset(set(item.keys())) for item in dict_items)
+
+
+def _extract_opinions_direct(
+    mentioned_tickers: list,
+    video_id: str,
+    channel: str,
+    pub_date: str,
+) -> list[Opinion]:
+    """把 analyzer 直出的 mentioned_tickers 直接映射为 Opinion。"""
+    opinions: list[Opinion] = []
+
+    for ticker_item in mentioned_tickers:
+        if not isinstance(ticker_item, dict):
+            continue
+
+        ticker = str(ticker_item.get("ticker", "")).strip().upper()
+        if not ticker:
+            continue
+        company = ticker_item.get("company_name", "")
+        analyst = ticker_item.get("analyst", "")
+        sentiment = str(ticker_item.get("sentiment", "neutral")).strip().lower() or "neutral"
+
+        direction = _normalize_direction(ticker_item.get("direction"), sentiment)
+        confidence = _normalize_enum(ticker_item.get("confidence"), CONFIDENCES, "medium")
+        horizon = _normalize_enum(ticker_item.get("horizon"), HORIZONS, "medium_term")
+        conviction = _normalize_enum(ticker_item.get("conviction"), CONVICTIONS, "medium")
+
+        levels = ticker_item.get("price_levels")
+        if not isinstance(levels, list):
+            levels = []
+
+        generated = 0
+        for lv in levels:
+            if not isinstance(lv, dict):
+                continue
+            price = _to_optional_float(lv.get("level", lv.get("price")))
+            pred_type = _normalize_prediction_type(lv.get("type"), has_price=price is not None)
+            target_price = _to_optional_float(lv.get("target_price"))
+            stop_loss = _to_optional_float(lv.get("stop_loss"))
+            if pred_type == "target_price" and target_price is None:
+                target_price = price
+
+            oid = make_opinion_id(video_id, ticker, pred_type, price)
+            prediction = Prediction(
+                type=pred_type,
+                direction=direction,
+                price=price,
+                target_price=target_price,
+                stop_loss=stop_loss,
+                confidence=confidence,
+                conviction=conviction,
+                horizon=horizon,
+                context=lv.get("context", ""),
+            )
+            opinions.append(
+                Opinion(
+                    opinion_id=oid,
+                    video_id=video_id,
+                    channel=channel,
+                    analyst=analyst,
+                    published_date=pub_date,
+                    ticker=ticker,
+                    company_name=company,
+                    sentiment=sentiment,
+                    prediction=prediction,
+                    price_at_publish=None,
+                    extraction_source="qwen_direct",
+                )
+            )
+            generated += 1
+
+        if generated == 0:
+            pred_type = "direction_call"
+            oid = make_opinion_id(video_id, ticker, pred_type, None)
+            prediction = Prediction(
+                type=pred_type,
+                direction=direction,
+                price=None,
+                target_price=None,
+                stop_loss=None,
+                confidence=confidence,
+                conviction=conviction,
+                horizon=horizon,
+                context=ticker_item.get("context", ""),
+            )
+            opinions.append(
+                Opinion(
+                    opinion_id=oid,
+                    video_id=video_id,
+                    channel=channel,
+                    analyst=analyst,
+                    published_date=pub_date,
+                    ticker=ticker,
+                    company_name=company,
+                    sentiment=sentiment,
+                    prediction=prediction,
+                    price_at_publish=None,
+                    extraction_source="qwen_direct",
+                )
+            )
+
+    return opinions
+
+
 def extract_opinions_from_result(result_json_path: Path) -> list[Opinion]:
     """
     从单个分析结果 JSON 提取 opinions。
@@ -172,6 +354,16 @@ def extract_opinions_from_result(result_json_path: Path) -> list[Opinion]:
     if not mentioned:
         logging.info(f"[{video_id}] 无 mentioned_tickers，跳过")
         return []
+
+    if _has_direct_prediction_fields(mentioned):
+        opinions = _extract_opinions_direct(
+            mentioned_tickers=mentioned,
+            video_id=video_id,
+            channel=channel,
+            pub_date=pub_date,
+        )
+        logging.info(f"[{video_id}] 直出映射 {len(opinions)} 条 opinions（跳过 Cerebras）")
+        return opinions
 
     if not CEREBRAS_API_KEY:
         logging.error("未设置 CEREBRAS_API_KEY，无法做精标注")
@@ -207,6 +399,7 @@ def extract_opinions_from_result(result_json_path: Path) -> list[Opinion]:
                 target_price=op.get("target_price"),
                 stop_loss=op.get("stop_loss"),
                 confidence=op.get("confidence", "medium"),
+                conviction=op.get("conviction", "medium"),
                 horizon=op.get("horizon", "medium_term"),
                 context=op.get("context", ""),
             )

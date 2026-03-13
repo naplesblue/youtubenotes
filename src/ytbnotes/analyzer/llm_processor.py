@@ -73,6 +73,16 @@ def process_text_tasks(raw_transcript_with_timestamps, api_key=None):
 3.  结构化股票数据提取 (JSON 格式):
     * 提取音频中所有明确提及的股票代码（如 NVDA, AMD, AAPL, GOOG 等）。
     * 对于每只股票，提取分析师对其的情绪（bullish/bearish/neutral）、公司名称、关键价格水平。
+    * 对每只股票必须补充以下四个字段（用于下游直接生成观点，不再二次精标注）：
+        * `direction`：`long` / `short` / `hold`
+        * `confidence`：`high` / `medium` / `low`
+        * `horizon`：`short_term` / `medium_term` / `long_term`
+        * `conviction`：`high` / `medium` / `low`
+    * 如果文本中无法明确判断，默认：
+        * `direction = hold`
+        * `confidence = medium`
+        * `horizon = medium_term`
+        * `conviction = medium`
     * 如果有提及人物姓名（分析师、CEO、嘉宾等），也请提取。
 
 **输出格式:**
@@ -96,6 +106,10 @@ def process_text_tasks(raw_transcript_with_timestamps, api_key=None):
     "company_name": "英伟达",
     "sentiment": "bullish",
     "analyst": "Rhino",
+    "direction": "long",
+    "confidence": "high",
+    "horizon": "medium_term",
+    "conviction": "high",
     "price_levels": [
       {{"level": 850.00, "type": "support", "context": "关键支撑"}},
       {{"level": 950.00, "type": "target", "context": "目标价"}}

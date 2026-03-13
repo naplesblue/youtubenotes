@@ -23,6 +23,8 @@ DIRECTIONS = {"long", "short", "hold"}
 
 CONFIDENCES = {"high", "medium", "low"}
 
+CONVICTIONS = {"high", "medium", "low"}
+
 HORIZONS = {"short_term", "medium_term", "long_term"}
 
 VERIFICATION_RESULTS = {"win", "loss", "pending", "expired"}
@@ -98,6 +100,7 @@ class Prediction:
     target_price: Optional[float] = None
     stop_loss: Optional[float] = None
     confidence: str = "medium"
+    conviction: str = "medium"
     horizon: str = "medium_term"
     context: str = ""
 
@@ -109,6 +112,7 @@ class Prediction:
             "target_price": self.target_price,
             "stop_loss": self.stop_loss,
             "confidence": self.confidence,
+            "conviction": self.conviction,
             "horizon": self.horizon,
             "context": self.context,
         }
@@ -122,6 +126,7 @@ class Prediction:
             target_price=d.get("target_price"),
             stop_loss=d.get("stop_loss"),
             confidence=d.get("confidence", "medium"),
+            conviction=d.get("conviction", "medium"),
             horizon=d.get("horizon", "medium_term"),
             context=d.get("context", ""),
         )

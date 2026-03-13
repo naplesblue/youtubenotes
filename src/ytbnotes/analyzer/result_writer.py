@@ -209,6 +209,10 @@ def process_and_save_results(
                 "company_name": td.get("company_name", "Unknown"),
                 "sentiment":    td.get("sentiment", "neutral"),
                 "analyst":      final_analyst,
+                "direction":    td.get("direction", "hold"),
+                "confidence":   td.get("confidence", "medium"),
+                "horizon":      td.get("horizon", "medium_term"),
+                "conviction":   td.get("conviction", "medium"),
                 "price_levels": td.get("price_levels", []),
             })
     elif price_levels_json and isinstance(price_levels_json, list):
@@ -217,7 +221,9 @@ def process_and_save_results(
             t = level.get("ticker")
             if t and t not in ticker_map:
                 ticker_map[t] = {"ticker": t, "company_name": "", "sentiment": "neutral",
-                                 "analyst": "unknown", "price_levels": []}
+                                 "analyst": "unknown", "direction": "hold",
+                                 "confidence": "medium", "horizon": "medium_term",
+                                 "conviction": "medium", "price_levels": []}
             if t:
                 ticker_map[t]["price_levels"].append({
                     "level":   level.get("price"),
