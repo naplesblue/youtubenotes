@@ -93,18 +93,12 @@ def render_opinion_dashboard(
     # ── 博主胜率排行 ──────────────────────────────────────────────────────────
     lines.append("## 🏅 博主信誉排行")
     lines.append("")
-    lines.append(
-        "| 博主 | 频道 | 观点数 | 已验证 | 30d 胜率 | 90d 胜率 | 180d 胜率 | 盈亏比 | 最大单笔亏损 | 平均盈利 | 平均亏损 | 信誉分 |"
-    )
-    lines.append(
-        "|------|------|--------|--------|----------|----------|-----------|--------|--------------|----------|----------|--------|"
-    )
+    lines.append("| 博主 | 胜率(90d) | 盈亏比 | 最大亏损 | 信誉分 | 活跃度 | 观点数 |")
+    lines.append("|------|-----------|--------|----------|--------|--------|--------|")
 
     for p in profiles:
         analyst = p.get("analyst") or p.get("channel", "?")
-        channel = p.get("channel", "?")
         total = p.get("total_opinions", 0)
-        verified = p.get("verified_opinions", 0)
         wr = p.get("win_rate", {})
 
         def fmt_wr(key: str) -> str:
@@ -125,17 +119,30 @@ def render_opinion_dashboard(
                 return "—"
             return f"{v:.2f}"
 
+        wr_90d = fmt_wr("90d")
         pl_ratio = p.get("profit_loss_ratio")
         max_loss = p.get("max_single_loss")
-        avg_win = p.get("avg_win_return")
-        avg_loss = p.get("avg_loss_return")
 
         score = p.get("credibility_score")
         score_str = f"⭐ {score}" if score else "—"
-        insuf = " ⚠️" if not p.get("sample_sufficient") else ""
+
+        days_since = p.get("days_since_last_opinion")
+        if days_since is not None:
+            if days_since <= 30:
+                activity_str = "🔥 活跃"
+            elif days_since <= 90:
+                activity_str = "✅ 正常"
+            elif days_since <= 180:
+                activity_str = "⚠️ 渐隐"
+            else:
+                activity_str = "💤 沉潜"
+        else:
+            activity_str = "—"
+
+        opinion_count = p.get("verified_opinions", 0)
 
         lines.append(
-            f"| {analyst} | {channel} | {total} | {verified}{insuf} | {fmt_wr('30d')} | {fmt_wr('90d')} | {fmt_wr('180d')} | {fmt_ratio(pl_ratio)} | {fmt_pct(max_loss)} | {fmt_pct(avg_win)} | {fmt_pct(avg_loss)} | {score_str} |"
+            f"| {analyst} | {wr_90d} | {fmt_ratio(pl_ratio)} | {fmt_pct(max_loss)} | {score_str} | {activity_str} | {opinion_count} |"
         )
 
     lines.append("")

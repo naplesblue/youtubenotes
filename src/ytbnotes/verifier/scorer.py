@@ -2,6 +2,7 @@
 博主胜率 / 个股共识 聚合计算器
 """
 
+import datetime
 import logging
 from collections import defaultdict
 from typing import Optional
@@ -112,7 +113,42 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
             1 for op in ops if op.verification.status in ("pending", "partial")
         )
 
+        # 时间衰减计算
+        today = datetime.date.today()
+        opinion_dates = []
+        for op in ops:
+            if op.published_date:
+                try:
+                    opinion_dates.append(datetime.date.fromisoformat(op.published_date))
+                except (ValueError, TypeError):
+                    pass
+
+        last_opinion_date = None
+        days_since_last_opinion = None
+        activity_weight = 1.0
+
+        if opinion_dates:
+            last_opinion_date = max(opinion_dates).isoformat()
+            days_since_last_opinion = (today - max(opinion_dates)).days
+
+            # 时间衰减权重：30天内=1.0，30-90天=0.8，90-180天=0.6，180-365天=0.4，365天+=0.2
+            if days_since_last_opinion <= 30:
+                activity_weight = 1.0
+            elif days_since_last_opinion <= 90:
+                activity_weight = 0.8
+            elif days_since_last_opinion <= 180:
+                activity_weight = 0.6
+            elif days_since_last_opinion <= 365:
+                activity_weight = 0.4
+            else:
+                activity_weight = 0.2
+
         metrics_90d = window_metrics.get("90d", {})
+
+        # 信誉分加入时间衰减权重
+        credibility_with_decay = (
+            round(credibility * activity_weight, 1) if credibility else None
+        )
         profiles.append(
             {
                 "channel": channel,
@@ -129,6 +165,10 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
                 "worst_tickers": worst,
                 "active_opinions": active,
                 "credibility_score": credibility,
+                "credibility_with_decay": credibility_with_decay,
+                "last_opinion_date": last_opinion_date,
+                "days_since_last_opinion": days_since_last_opinion,
+                "activity_weight": activity_weight,
                 "sample_sufficient": verified_count >= 30,
             }
         )
