@@ -34,6 +34,14 @@ pip install -r requirements.txt
 - `LLM_MODEL_NAME`: 使用 `qwen-plus` 等 Qwen 家族模型最配适提示词。
 - `YTDLP_USE_COOKIES`: 设为 `1` 并通过 `YTDLP_COOKIES_PATH` 指向你的 netscape cookie（可以使用包含的 `tools/extract_cookies.py` 从本地浏览器提取并写入 `data/youtube_cookies.txt`）以规避 Youtube 账户拦截限制。
 - `FUNASR_CHUNK_SECONDS`: 设置内存受限时（建议60s-300s）的长音频分割阈值，用于 ASR 本地转录。
+- `SUBTITLE_FIRST_ENABLED`: 字幕优先开关，默认 `1`（命中字幕时跳过音频下载）。
+- `SUBTITLE_TO_ASR_FALLBACK`: 字幕失败是否回退音频下载，默认 `1`。
+- `SUBTITLE_ALLOW_AUTO_CAPTIONS`: 是否允许自动字幕作为兜底，默认 `1`。
+- `SUBTITLE_AUTO_CAPTION_LANG_FAMILIES`: 自动字幕语言族白名单（默认 `en`）。
+- `BACKFILL_API_TIMEOUT_SECONDS`: backfill 模式下 YouTube API 超时秒数，默认 `20`。
+- `BACKFILL_API_MAX_RETRIES`: backfill 模式下 API 最大重试次数，默认 `3`。
+- `BACKFILL_API_BACKOFF_SECONDS`: backfill 模式下指数退避基数，默认 `1.5`。
+- `BACKFILL_CACHE_TTL_HOURS`: backfill 元数据缓存 TTL（小时），默认 `24`。
 
 ### 2. 配置跨包分析映射 `config.yaml`
 
@@ -75,4 +83,16 @@ python run_pipeline.py --dry-run
 ```bash
 # 全功能启动
 python run_pipeline.py
+```
+
+如需回填历史数据：
+```bash
+# 常规回填（带缓存，TTL 默认 24h）
+python run_backfill.py --batch-size 5 --dateafter 20260101
+
+# 强制刷新频道元数据缓存
+python run_backfill.py --batch-size 5 --dateafter 20260101 --refresh-cache
+
+# 禁用缓存（每次都实时拉 API）
+python run_backfill.py --batch-size 5 --dateafter 20260101 --cache-ttl-hours 0
 ```

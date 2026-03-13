@@ -13,6 +13,7 @@ from urllib.parse import urlparse, parse_qs
 from pathlib import Path
 from dotenv import load_dotenv
 from yt_dlp.utils import sanitize_filename
+from ..analyzer.subtitle import load_subtitle_transcript
 
 load_dotenv()
 
@@ -59,6 +60,7 @@ PROJECT_DIR        = Path(__file__).resolve().parent.parent.parent.parent
 CHANNELS_FILE      = str(PROJECT_DIR / 'channels.yaml')
 TRACKING_FILE      = str(PROJECT_DIR / 'data' / 'download_history.json')
 DOWNLOAD_DIR       = str(PROJECT_DIR / 'data' / 'downloads')
+SUBTITLE_DIR       = str(PROJECT_DIR / 'data' / 'subtitles')
 YT_DLP_PATH        = 'yt-dlp'
 AUDIO_FORMAT       = 'mp3'
 
@@ -75,6 +77,15 @@ DEFAULT_MAX_ENTRIES  = 5
 HISTORY_TTL_DAYS     = 3
 LATEST_PER_CHANNEL   = 1
 CLEANUP_DOWNLOAD_FILES = os.getenv("YTDLP_CLEANUP_DOWNLOAD_FILES", "1").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+CLEANUP_SUBTITLE_FILES = os.getenv("YTDLP_CLEANUP_SUBTITLE_FILES", "1").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+SUBTITLE_FIRST_ENABLED = os.getenv("SUBTITLE_FIRST_ENABLED", "1").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+SUBTITLE_TO_ASR_FALLBACK = os.getenv("SUBTITLE_TO_ASR_FALLBACK", "1").strip().lower() in {
     "1", "true", "yes", "on"
 }
 
@@ -320,6 +331,9 @@ def build_tracked_file_set(tracking_data: dict) -> set[str]:
             rel = _safe_rel_from_cwd(str(details.get("file_path", "")))
             if rel:
                 tracked.add(rel)
+            subtitle_rel = _safe_rel_from_cwd(str(details.get("subtitle_path", "")))
+            if subtitle_rel:
+                tracked.add(subtitle_rel)
     return tracked
 
 
@@ -333,19 +347,27 @@ def _is_under_directory(path_obj: Path, root_obj: Path) -> bool:
 
 def remove_download_file_if_safe(path_str: str, root_dir: str) -> bool:
     """仅删除 root_dir 下的文件，防止误删外部路径。"""
+    return remove_file_if_safe(path_str, [root_dir])
+
+
+def remove_file_if_safe(path_str: str, root_dirs: list[str]) -> bool:
+    """
+    仅删除 root_dirs 白名单目录下的文件，防止误删外部路径。
+    """
     rel = _safe_rel_from_cwd(path_str)
     if not rel:
         return False
+
     target = Path(rel).resolve()
-    root = Path(root_dir).resolve()
-    if not _is_under_directory(target, root):
-        logging.warning(f"跳过删除（不在下载目录内）: {target}")
+    allowed = [Path(root).resolve() for root in root_dirs if root]
+    if not any(_is_under_directory(target, root) for root in allowed):
+        logging.warning(f"跳过删除（不在允许目录中）: {target}")
         return False
     if not target.exists() or not target.is_file():
         return False
     try:
         target.unlink()
-        logging.info(f"已清理旧下载文件: {target}")
+        logging.info(f"已清理旧文件: {target}")
         return True
     except Exception as e:
         logging.warning(f"删除文件失败 {target}: {e}")
@@ -372,6 +394,46 @@ def cleanup_orphan_download_files(download_dir: str, tracked_rel_paths: set[str]
         if not file_obj.is_file():
             continue
         if file_obj.suffix.lower() not in removable_exts:
+            continue
+        rel = _safe_rel_from_cwd(str(file_obj))
+        if not rel:
+            continue
+        if rel in tracked_rel_paths:
+            continue
+        try:
+            mtime = datetime.datetime.fromtimestamp(file_obj.stat().st_mtime)
+        except Exception:
+            errors += 1
+            continue
+        if mtime >= cutoff:
+            kept_recent += 1
+            continue
+        try:
+            file_obj.unlink()
+            removed += 1
+        except Exception:
+            errors += 1
+
+    return {"removed": removed, "kept_recent": kept_recent, "errors": errors}
+
+
+def cleanup_orphan_subtitle_files(subtitle_dir: str, tracked_rel_paths: set[str], cutoff: datetime.datetime):
+    """
+    清理孤儿字幕文本：
+    - 文件位于 subtitle_dir
+    - 不在 tracking 记录中
+    - 且 mtime 早于 cutoff（3 天前）
+    """
+    root = Path(subtitle_dir).resolve()
+    if not root.exists():
+        return {"removed": 0, "kept_recent": 0, "errors": 0}
+
+    removed = 0
+    kept_recent = 0
+    errors = 0
+
+    for file_obj in root.rglob("*.txt"):
+        if not file_obj.is_file():
             continue
         rel = _safe_rel_from_cwd(str(file_obj))
         if not rel:
@@ -688,6 +750,39 @@ def download_video(
         logging.error(f"检查下载文件时出错: {e}")
         return None
 
+
+def save_subtitle_transcript(
+    transcript_text: str,
+    channel_name: str,
+    video_title: str,
+    video_id: str,
+    published_dt: datetime.datetime | None,
+) -> str | None:
+    """
+    保存字幕转录文本到 data/subtitles/<channel>/，成功返回相对路径。
+    """
+    safe_channel_name = sanitize_filename(channel_name)
+    channel_subtitle_dir = Path(SUBTITLE_DIR) / safe_channel_name
+    channel_subtitle_dir.mkdir(parents=True, exist_ok=True)
+
+    date_prefix = (
+        published_dt.strftime("%Y%m%d")
+        if published_dt is not None
+        else datetime.datetime.now().strftime("%Y%m%d")
+    )
+    safe_title = sanitize_filename(video_title or "无标题").strip()[:120] or "无标题"
+    filename = f"{date_prefix} - {safe_title} [{video_id}].txt"
+    subtitle_path = channel_subtitle_dir / filename
+
+    try:
+        write_file_atomically(subtitle_path, transcript_text, mode="w", encoding="utf-8")
+        rel = os.path.relpath(subtitle_path.resolve(), start=os.getcwd())
+        logging.info(f"字幕文本已保存: {rel}")
+        return rel
+    except Exception as e:
+        logging.error(f"保存字幕文本失败: {e}")
+        return None
+
 # =============================================================================
 # 主流程
 # =============================================================================
@@ -696,11 +791,15 @@ def main():
     logging.info("--- 开始 YouTube RSS 视频下载任务 ---")
 
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    os.makedirs(SUBTITLE_DIR, exist_ok=True)
     now = datetime.datetime.now()
     cutoff = now - datetime.timedelta(days=HISTORY_TTL_DAYS)
     logging.info(
         f"运行策略：每频道仅处理最新 {LATEST_PER_CHANNEL} 条，"
-        f"仅保留/处理最近 {HISTORY_TTL_DAYS} 天数据（cutoff={cutoff.isoformat(timespec='seconds')})"
+        f"仅保留/处理最近 {HISTORY_TTL_DAYS} 天数据（cutoff={cutoff.isoformat(timespec='seconds')}）"
+    )
+    logging.info(
+        f"字幕优先策略：enabled={SUBTITLE_FIRST_ENABLED}, subtitle_to_asr_fallback={SUBTITLE_TO_ASR_FALLBACK}"
     )
 
     # 加载频道列表
@@ -710,20 +809,27 @@ def main():
         return
 
     # 加载历史记录
-    # 结构: { feed_url: { video_id: { channel_name, file_path, download_time } } }
+    # 结构: { feed_url: { video_id: { channel_name, file_path|subtitle_path, ... } } }
     tracking_data = load_tracking_data(TRACKING_FILE)
     tracking_data, kept_feed_count, removed_count = prune_tracking_data(tracking_data, cutoff)
     save_tracking_data(TRACKING_FILE, tracking_data)
     logging.info(
         f"历史记录已裁剪：保留 {kept_feed_count} 个频道最新记录，清理 {removed_count} 条过期/冗余记录。"
     )
+    tracked_paths = build_tracked_file_set(tracking_data) if (CLEANUP_DOWNLOAD_FILES or CLEANUP_SUBTITLE_FILES) else set()
     if CLEANUP_DOWNLOAD_FILES:
-        tracked_paths = build_tracked_file_set(tracking_data)
         cleanup_stats = cleanup_orphan_download_files(DOWNLOAD_DIR, tracked_paths, cutoff)
         logging.info(
             f"下载目录清理完成：删除孤儿文件 {cleanup_stats['removed']}，"
             f"保留近3天孤儿文件 {cleanup_stats['kept_recent']}，"
             f"错误 {cleanup_stats['errors']}。"
+        )
+    if CLEANUP_SUBTITLE_FILES:
+        subtitle_cleanup_stats = cleanup_orphan_subtitle_files(SUBTITLE_DIR, tracked_paths, cutoff)
+        logging.info(
+            f"字幕目录清理完成：删除孤儿文件 {subtitle_cleanup_stats['removed']}，"
+            f"保留近3天孤儿文件 {subtitle_cleanup_stats['kept_recent']}，"
+            f"错误 {subtitle_cleanup_stats['errors']}。"
         )
 
     # 遍历频道
@@ -811,18 +917,67 @@ def main():
             logging.info(f"视频 '{video_id}' 已在记录中，跳过。")
             continue
 
-        logging.info(f"发现新视频 (ID: {video_id})，准备下载...")
-        relative_filepath = download_video(
-            video_link, video_id, DOWNLOAD_DIR, channel_name
-        )
+        upload_date = published_dt.date().isoformat() if published_dt else None
+        subtitle_probe_result = None
+        input_type = "audio"
+        subtitle_path = None
+        relative_filepath = None
+
+        if SUBTITLE_FIRST_ENABLED:
+            logging.info(f"发现新视频 (ID: {video_id})，先尝试字幕优先路径...")
+            try:
+                subtitle_result = load_subtitle_transcript(video_link)
+                subtitle_probe_result = {
+                    "ok": bool(subtitle_result.get("ok")),
+                    "probe": subtitle_result.get("probe"),
+                    "quality": subtitle_result.get("quality"),
+                    "error": subtitle_result.get("error"),
+                    "lang_family": subtitle_result.get("lang_family"),
+                    "source": subtitle_result.get("source"),
+                }
+                if subtitle_result.get("ok") and subtitle_result.get("transcript"):
+                    subtitle_path = save_subtitle_transcript(
+                        transcript_text=subtitle_result["transcript"],
+                        channel_name=channel_name,
+                        video_title=video_title,
+                        video_id=video_id,
+                        published_dt=published_dt,
+                    )
+                    if subtitle_path:
+                        relative_filepath = subtitle_path
+                        input_type = "subtitle"
+                        logging.info("字幕获取成功，跳过音频下载。")
+                    else:
+                        logging.warning("字幕保存失败，转入音频下载路径。")
+                else:
+                    err_msg = subtitle_result.get("error") or "subtitle_not_available"
+                    if not SUBTITLE_TO_ASR_FALLBACK:
+                        logging.warning(
+                            f"字幕不可用且 SUBTITLE_TO_ASR_FALLBACK=0，跳过视频。原因: {err_msg}"
+                        )
+                        continue
+                    logging.info(f"字幕不可用或质量不达标，回退音频下载。原因: {err_msg}")
+            except Exception as e:
+                logging.warning(f"字幕优先路径异常，回退音频下载: {e}")
+                subtitle_probe_result = {"ok": False, "error": f"exception:{type(e).__name__}:{e}"}
+
+        if relative_filepath is None:
+            logging.info(f"发现新视频 (ID: {video_id})，准备下载音频...")
+            relative_filepath = download_video(
+                video_link, video_id, DOWNLOAD_DIR, channel_name
+            )
+            input_type = "audio"
+            subtitle_path = None
 
         if relative_filepath:
             old_relative_filepath = None
+            old_subtitle_filepath = None
             existing_feed_videos = tracking_data.get(feed_url, {})
             if isinstance(existing_feed_videos, dict) and existing_feed_videos:
                 first_details = next(iter(existing_feed_videos.values()))
                 if isinstance(first_details, dict):
                     old_relative_filepath = first_details.get("file_path")
+                    old_subtitle_filepath = first_details.get("subtitle_path")
 
             # 每个 feed 只保留“当前最新视频”一条记录（覆盖旧记录）
             tracking_data[feed_url] = {
@@ -830,6 +985,12 @@ def main():
                     "channel_name":  channel_name,
                     "host":          host,
                     "file_path":     relative_filepath,
+                    "subtitle_path": subtitle_path,
+                    "input_type":    input_type,
+                    "original_url":  video_link,
+                    "title":         video_title,
+                    "upload_date":   upload_date,
+                    "subtitle_probe_result": subtitle_probe_result,
                     "download_time": datetime.datetime.now().isoformat(),
                     "published_time": published_dt.isoformat() if published_dt else None,
                 }
@@ -837,13 +998,13 @@ def main():
             save_tracking_data(TRACKING_FILE, tracking_data)
             logging.info(f"已记录最新视频: Feed={feed_url}, VideoID={video_id}")
 
-            # 新视频落地后，立即删除该频道被替换的旧文件，避免持续堆积。
-            if (
-                CLEANUP_DOWNLOAD_FILES
-                and old_relative_filepath
-                and old_relative_filepath != relative_filepath
-            ):
-                remove_download_file_if_safe(old_relative_filepath, DOWNLOAD_DIR)
+            # 新视频落地后，立即删除该频道被替换的旧文件（音频/字幕），避免持续堆积。
+            if old_relative_filepath and old_relative_filepath != relative_filepath:
+                if CLEANUP_DOWNLOAD_FILES:
+                    remove_file_if_safe(old_relative_filepath, [DOWNLOAD_DIR])
+            if old_subtitle_filepath and old_subtitle_filepath != relative_filepath:
+                if CLEANUP_SUBTITLE_FILES:
+                    remove_file_if_safe(old_subtitle_filepath, [SUBTITLE_DIR])
         else:
             logging.error(f"下载视频失败: {video_link}")
 

@@ -8,7 +8,7 @@ from .utils import success, failure, Result
 
 def find_videos_to_process(history_file, analysis_log_file) -> Result:
     """
-    查找下载历史中存在、且尚未成功分析的视频文件。
+    查找下载历史中存在、且尚未成功分析的输入文件（音频或字幕）。
     返回 Result({'ok': True, 'value': [path, ...]})。
     """
     logging.info("正在查找需要处理的视频...")
@@ -56,9 +56,17 @@ def find_videos_to_process(history_file, analysis_log_file) -> Result:
             logging.warning(f"feed '{feed_url}' 条目格式不正确，已跳过。")
             continue
         for video_id, details in videos.items():
-            if isinstance(details, dict) and details.get('file_path'):
+            if isinstance(details, dict):
                 try:
-                    current_filepath = Path(details['file_path']).resolve()
+                    input_type = str(details.get("input_type", "audio")).strip().lower()
+                    primary_path = details.get("subtitle_path") if input_type == "subtitle" else details.get("file_path")
+                    fallback_path = details.get("file_path") or details.get("subtitle_path")
+                    candidate_path = primary_path or fallback_path
+                    if not candidate_path:
+                        logging.debug(f"跳过视频 '{video_id}'，缺少可处理路径。")
+                        continue
+
+                    current_filepath = Path(candidate_path).resolve()
                     current_filepath_str = str(current_filepath)
                     if not current_filepath.exists():
                         logging.debug(f"文件不存在，跳过: {current_filepath_str}")
@@ -72,7 +80,7 @@ def find_videos_to_process(history_file, analysis_log_file) -> Result:
                 except Exception as e:
                     logging.warning(f"处理视频 '{video_id}' 记录时出错: {e}")
             else:
-                logging.debug(f"跳过视频 '{video_id}'，缺少 file_path。")
+                logging.debug(f"跳过视频 '{video_id}'，记录不是有效字典。")
 
     logging.info(f"找到 {len(videos_to_process)} 个待处理视频。")
     if skipped_exist_count:
@@ -103,22 +111,34 @@ def get_video_metadata(video_path_str, history_data):
             continue
         for vid, details in videos.items():
             try:
-                history_path_str = details.get("file_path")
-                if history_path_str:
+                history_paths = []
+                if details.get("file_path"):
+                    history_paths.append(details.get("file_path"))
+                if details.get("subtitle_path"):
+                    history_paths.append(details.get("subtitle_path"))
+                matched = False
+                for history_path_str in history_paths:
                     history_path_obj = Path(history_path_str).resolve()
                     if history_path_obj == video_path_obj:
-                        return {
-                            "title":        details.get("title", title_fallback),
-                            "channel_name": details.get("channel_name", channel_from_path),
-                            "host":         details.get("host"),
-                            "video_id":     vid,
-                            "original_url": details.get("original_url"),
-                            "upload_date":  details.get("upload_date", str(upload_date) if upload_date else None),
-                        }
+                        matched = True
+                        break
+                if matched:
+                    return {
+                        "title":        details.get("title", title_fallback),
+                        "channel_name": details.get("channel_name", channel_from_path),
+                        "host":         details.get("host"),
+                        "video_id":     vid,
+                        "original_url": details.get("original_url"),
+                        "upload_date":  details.get("upload_date", str(upload_date) if upload_date else None),
+                        "input_type":   details.get("input_type", "audio"),
+                        "subtitle_path": details.get("subtitle_path"),
+                        "subtitle_probe_result": details.get("subtitle_probe_result"),
+                    }
             except Exception as e:
                 logging.warning(f"解析历史记录路径失败: {e}")
                 continue
 
+    fallback_input_type = "subtitle" if video_path_obj.suffix.lower() == ".txt" else "audio"
     return {
         "title":        title_fallback,
         "channel_name": channel_from_path,
@@ -126,4 +146,7 @@ def get_video_metadata(video_path_str, history_data):
         "video_id":     video_id_fallback or "unknown_id",
         "original_url": None,
         "upload_date":  str(upload_date) if upload_date else None,
+        "input_type":   fallback_input_type,
+        "subtitle_path": str(video_path_obj) if fallback_input_type == "subtitle" else None,
+        "subtitle_probe_result": None,
     }

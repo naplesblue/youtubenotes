@@ -14,6 +14,7 @@ from .config import (
     SUBTITLE_DOWNLOAD_TIMEOUT,
     SUBTITLE_PREFERRED_LANGS,
     SUBTITLE_ALLOW_AUTO_CAPTIONS,
+    SUBTITLE_AUTO_CAPTION_LANG_FAMILIES,
     SUBTITLE_MIN_CHARS,
     SUBTITLE_MIN_CUES,
     SUBTITLE_MIN_COVERAGE,
@@ -148,17 +149,22 @@ def probe_subtitle(video_url: str) -> dict:
                     result["source"] = "manual"
                     break
 
-    # --- 第二轮（可选）：auto_captions 中找英文或中文 ---
+    # --- 第二轮（可选）：auto_captions 中找白名单语言族 ---
     if not selected_lang and SUBTITLE_ALLOW_AUTO_CAPTIONS and isinstance(automatic, dict) and automatic:
         normalized_auto_map = {_normalize_lang_tag(k): str(k) for k in automatic.keys()}
         for preferred in SUBTITLE_PREFERRED_LANGS:
             n_pref = _normalize_lang_tag(preferred)
             if n_pref in normalized_auto_map:
+                if _lang_family(n_pref) not in SUBTITLE_AUTO_CAPTION_LANG_FAMILIES:
+                    continue
                 selected_lang = normalized_auto_map[n_pref]
                 result["source"] = "auto_caption"
                 break
         if not selected_lang:
             for lang in automatic.keys():
+                fam = _lang_family(lang)
+                if fam not in SUBTITLE_AUTO_CAPTION_LANG_FAMILIES:
+                    continue
                 if _is_english_lang_tag(lang) or _is_chinese_lang_tag(lang):
                     selected_lang = str(lang)
                     result["source"] = "auto_caption"

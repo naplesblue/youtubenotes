@@ -27,7 +27,6 @@ from .config import (
 )
 from .utils import parse_llm_output
 from .metadata import find_videos_to_process, get_video_metadata
-from .subtitle import load_subtitle_transcript
 from .transcriber import extract_audio, get_raw_transcript_with_timestamps, FunASRWorkerClient
 from .llm_processor import process_text_tasks
 from .result_writer import process_and_save_results, update_analysis_log
@@ -158,42 +157,37 @@ def main():
 
             try:
                 video_metadata = get_video_metadata(video_path_str, full_history_data)
-                original_url = video_metadata.get("original_url")
                 raw_transcript = None
+                input_type = str(video_metadata.get("input_type", "audio")).strip().lower()
+                subtitle_probe_result = video_metadata.get("subtitle_probe_result")
+                if not isinstance(subtitle_probe_result, dict):
+                    subtitle_probe_result = None
+                log_entry["subtitle_probe_result"] = subtitle_probe_result
 
-                if TRANSCRIPT_MODE in {"auto", "subtitle"}:
-                    if not original_url:
-                        subtitle_result = {
-                            "ok": False,
-                            "probe": {"ok": False, "reason": "missing_original_url"},
-                            "quality": None,
-                            "error": "missing_original_url",
-                        }
-                    else:
-                        subtitle_result = load_subtitle_transcript(original_url)
-
-                    subtitle_probe_result = {
-                        "ok": bool(subtitle_result.get("ok")),
-                        "probe": subtitle_result.get("probe"),
-                        "quality": subtitle_result.get("quality"),
-                        "error": subtitle_result.get("error"),
-                        "lang_family": subtitle_result.get("lang_family"),
-                        "source": subtitle_result.get("source"),
-                    }
-                    log_entry["subtitle_probe_result"] = subtitle_probe_result
-
-                    if subtitle_result.get("ok") and subtitle_result.get("transcript"):
-                        raw_transcript = subtitle_result["transcript"]
-                        lang_fam = subtitle_result.get("lang_family") or "unknown"
-                        sub_src = subtitle_result.get("source") or "manual"
-                        transcript_source = f"subtitle_{sub_src}_{lang_fam}"
-                        logging.info(f"命中字幕 [{lang_fam} / {sub_src}]，跳过 ASR 转录。")
-                    else:
-                        err_msg = subtitle_result.get("error") or "subtitle_not_available"
-                        if TRANSCRIPT_MODE == "subtitle":
-                            raise RuntimeError(f"字幕模式未获取到可用人工英文字幕: {err_msg}")
-                        fallback_reason = f"subtitle_to_asr:{err_msg}"
-                        logging.info(f"字幕不可用或质量不达标，回退 ASR。原因: {err_msg}")
+                if input_type == "subtitle":
+                    subtitle_path_raw = str(video_metadata.get("subtitle_path") or video_path_str).strip()
+                    subtitle_path = Path(subtitle_path_raw).resolve()
+                    if not subtitle_path.exists():
+                        raise RuntimeError(f"字幕任务输入文件不存在: {subtitle_path}")
+                    try:
+                        raw_transcript = subtitle_path.read_text(encoding="utf-8")
+                    except Exception as e:
+                        raise RuntimeError(f"读取字幕文件失败: {subtitle_path} ({e})") from e
+                    if not raw_transcript or not raw_transcript.strip():
+                        raise RuntimeError(f"字幕任务输入为空: {subtitle_path}")
+                    lang_fam = "unknown"
+                    sub_src = "manual"
+                    if subtitle_probe_result:
+                        lang_fam = subtitle_probe_result.get("lang_family") or lang_fam
+                        sub_src = subtitle_probe_result.get("source") or sub_src
+                    transcript_source = f"subtitle_{sub_src}_{lang_fam}"
+                    logging.info(f"使用下载阶段字幕结果 [{lang_fam} / {sub_src}]，跳过 ASR 转录。")
+                else:
+                    if TRANSCRIPT_MODE == "subtitle":
+                        raise RuntimeError("TRANSCRIPT_MODE=subtitle 但该任务为音频输入，已拒绝回退到 ASR。")
+                    if input_type != "audio":
+                        fallback_reason = f"unknown_input_type:{input_type}"
+                        logging.warning(f"未知输入类型 '{input_type}'，按音频流程处理。")
 
                 if raw_transcript is None:
                     extracted_audio_path, should_cleanup_audio = extract_audio(video_path_str, AUDIO_DIR)

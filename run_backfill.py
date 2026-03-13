@@ -5,11 +5,12 @@ run_backfill.py
 独立的历史数据追溯脚本。
 工作流：
 1. 扫描 channels.yaml
-2. 调取 yt-dlp 查询 2026-01-01 至今的所有视频
-3. 对比 data/backfill_history.json，挑出 N 个未处理的视频下载音频
-4. 调用 audio_analyzer.py（注入 TRACKING_FILE=data/backfill_history.json）
-5. 调用 obsidian_sync.py
-6. 清理当批次下载的音频文件，释放磁盘空间
+2. 调取 YouTube API 查询 dateafter 至今的所有视频（带缓存与重试）
+3. 对比 data/backfill_history.json，挑出 N 个未完成状态的视频
+4. 字幕优先准备输入：命中字幕则保存文本并跳过音频下载；失败可回退音频
+5. 调用 audio_analyzer.py（注入 TRACKING_FILE=data/backfill_history.json）
+6. 调用 obsidian_sync.py 并回写状态机（input_ready/analyzed/done）
+7. 清理当批次已完成分析的音频文件
 """
 
 import os
@@ -24,6 +25,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 import re
 import requests
+import time
+from yt_dlp.utils import sanitize_filename
+
+from src.ytbnotes.analyzer.subtitle import load_subtitle_transcript
 
 load_dotenv()
 
@@ -33,10 +38,49 @@ CHANNELS_FILE = PROJECT_DIR / "channels.yaml"
 BACKFILL_FILE = DATA_DIR / "backfill_history.json"
 BACKFILL_CACHE_FILE = DATA_DIR / "backfill_cache.json"
 DOWNLOAD_DIR = DATA_DIR / "downloads"
+SUBTITLE_DIR = DATA_DIR / "subtitles"
 
 PYTHON = sys.executable
 YT_DLP = os.getenv("YTDLP_PATH", "yt-dlp")
 COOKIES_PATH = os.getenv("YTDLP_COOKIES_PATH", str(DATA_DIR / "youtube_cookies.txt"))
+SUBTITLE_FIRST_ENABLED = os.getenv("SUBTITLE_FIRST_ENABLED", "1").strip().lower() in {"1", "true", "yes", "on"}
+SUBTITLE_TO_ASR_FALLBACK = os.getenv("SUBTITLE_TO_ASR_FALLBACK", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, min_value: int | None = None) -> int:
+    raw = os.getenv(name, str(default))
+    try:
+        value = int(str(raw).strip())
+    except Exception:
+        value = default
+    if min_value is not None and value < min_value:
+        value = min_value
+    return value
+
+
+def _env_float(name: str, default: float, min_value: float | None = None) -> float:
+    raw = os.getenv(name, str(default))
+    try:
+        value = float(str(raw).strip())
+    except Exception:
+        value = default
+    if min_value is not None and value < min_value:
+        value = min_value
+    return value
+
+
+BACKFILL_API_TIMEOUT_SECONDS = _env_int("BACKFILL_API_TIMEOUT_SECONDS", 20, min_value=5)
+BACKFILL_API_MAX_RETRIES = _env_int("BACKFILL_API_MAX_RETRIES", 3, min_value=0)
+BACKFILL_API_BACKOFF_SECONDS = _env_float("BACKFILL_API_BACKOFF_SECONDS", 1.5, min_value=0.0)
+BACKFILL_CACHE_TTL_HOURS_DEFAULT = _env_int("BACKFILL_CACHE_TTL_HOURS", 24, min_value=0)
+
+RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
+
+STATUS_INPUT_READY = "input_ready"
+STATUS_ANALYZED = "analyzed"
+STATUS_DONE = "done"
+STATUS_FAILED_ANALYZE = "failed_analyze"
+STATUS_FAILED_SYNC = "failed_sync"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -83,14 +127,209 @@ def parse_iso_duration(duration_str):
     secs = int(match.group(3)) if match.group(3) else 0
     return hours * 3600 + mins * 60 + secs
 
-def get_channel_videos(url, dateafter="20260101", video_cache=None):
+
+def parse_utc_datetime(raw_value) -> datetime | None:
+    if not raw_value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(raw_value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt
+
+
+def _backoff_sleep_seconds(attempt: int) -> float:
+    return BACKFILL_API_BACKOFF_SECONDS * (2 ** max(attempt, 0))
+
+
+def request_json_with_retry(url: str, params: dict, api_name: str) -> dict | None:
+    max_attempts = BACKFILL_API_MAX_RETRIES + 1
+    for attempt in range(max_attempts):
+        try:
+            response = requests.get(url, params=params, timeout=BACKFILL_API_TIMEOUT_SECONDS)
+        except requests.RequestException as e:
+            if attempt < max_attempts - 1:
+                wait_seconds = _backoff_sleep_seconds(attempt)
+                logging.warning(
+                    f"⚠️ {api_name} 请求异常，{wait_seconds:.1f}s 后重试 "
+                    f"({attempt + 1}/{max_attempts}): {type(e).__name__}: {e}"
+                )
+                time.sleep(wait_seconds)
+                continue
+            logging.error(f"❌ {api_name} 请求异常且达到最大重试次数: {type(e).__name__}: {e}")
+            return None
+
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                if isinstance(data, dict):
+                    return data
+                logging.error(f"❌ {api_name} 返回非 JSON 对象。")
+                return None
+            except ValueError as e:
+                logging.error(f"❌ {api_name} JSON 解析失败: {e}")
+                return None
+
+        retriable = response.status_code in RETRYABLE_HTTP_STATUS
+        response_tail = (response.text or "").strip()[-300:]
+        if retriable and attempt < max_attempts - 1:
+            wait_seconds = _backoff_sleep_seconds(attempt)
+            logging.warning(
+                f"⚠️ {api_name} 返回 HTTP {response.status_code}，{wait_seconds:.1f}s 后重试 "
+                f"({attempt + 1}/{max_attempts})"
+            )
+            time.sleep(wait_seconds)
+            continue
+
+        logging.error(f"❌ {api_name} 请求失败: HTTP {response.status_code} | {response_tail}")
+        return None
+    return None
+
+
+def is_cache_entry_usable(
+    cache_entry: dict,
+    dateafter: str,
+    cache_ttl_seconds: int,
+    refresh_cache: bool,
+) -> tuple[bool, str]:
+    if refresh_cache:
+        return False, "refresh_requested"
+    if not isinstance(cache_entry, dict):
+        return False, "invalid_cache"
+    if cache_ttl_seconds <= 0:
+        return False, "cache_disabled_by_ttl"
+
+    cached_dateafter = str(cache_entry.get("dateafter", "99999999"))
+    if cached_dateafter > dateafter:
+        return False, "cache_range_insufficient"
+
+    fetched_at = parse_utc_datetime(cache_entry.get("fetched_at"))
+    if fetched_at is None:
+        return False, "cache_missing_fetched_at"
+
+    age_seconds = (datetime.now(timezone.utc) - fetched_at).total_seconds()
+    if age_seconds > cache_ttl_seconds:
+        return False, "cache_expired"
+
+    videos = cache_entry.get("videos")
+    if not isinstance(videos, list):
+        return False, "cache_videos_invalid"
+
+    return True, "cache_hit"
+
+
+def get_record_status(record: dict | None) -> str:
+    if not isinstance(record, dict):
+        return ""
+    return str(record.get("status", "")).strip().lower()
+
+
+def normalize_upload_date(upload_date: str) -> str:
+    raw = str(upload_date or "").strip()
+    if len(raw) >= 8 and raw[:8].isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+    return ""
+
+
+def resolve_input_path(record: dict | None) -> Path | None:
+    if not isinstance(record, dict):
+        return None
+    input_type = str(record.get("input_type", "audio")).strip().lower()
+    primary_path = record.get("subtitle_path") if input_type == "subtitle" else record.get("file_path")
+    fallback_path = record.get("file_path") or record.get("subtitle_path")
+    candidate = str(primary_path or fallback_path or "").strip()
+    if not candidate:
+        return None
+    try:
+        path_obj = Path(candidate).resolve()
+        return path_obj if path_obj.exists() else None
+    except Exception:
+        return None
+
+
+def save_subtitle_text(video_id: str, channel_name: str, video_title: str, upload_date: str, transcript: str) -> Path:
+    safe_channel = sanitize_filename(channel_name or "Unknown")
+    safe_title = sanitize_filename(video_title or "无标题").strip()[:120] or "无标题"
+    date_prefix = str(upload_date or "").replace("-", "")
+    if not date_prefix or len(date_prefix) != 8:
+        date_prefix = datetime.now().strftime("%Y%m%d")
+    subtitle_dir = SUBTITLE_DIR / safe_channel
+    subtitle_dir.mkdir(parents=True, exist_ok=True)
+    subtitle_path = subtitle_dir / f"{date_prefix} - {safe_title} [{video_id}].txt"
+    subtitle_path.write_text(transcript, encoding="utf-8")
+    return subtitle_path.resolve()
+
+
+def build_tracker_record(
+    *,
+    record: dict | None,
+    video_id: str,
+    feed_url: str,
+    channel_name: str,
+    host: str,
+    video_url: str,
+    video_title: str,
+    upload_date_yyyymmdd: str,
+    published_time: str | None,
+    duration_seconds: int,
+    input_type: str,
+    input_path: Path,
+    subtitle_probe_result: dict | None,
+) -> dict:
+    existing = record if isinstance(record, dict) else {}
+    existing_metadata = existing.get("metadata")
+    if not isinstance(existing_metadata, dict):
+        existing_metadata = {}
+    formatted_date = normalize_upload_date(upload_date_yyyymmdd)
+    input_path_str = str(input_path)
+
+    payload = {
+        "video_id": video_id,
+        "channel_name": channel_name,
+        "host": host,
+        "original_url": video_url,
+        "title": video_title,
+        "upload_date": formatted_date,
+        "published_time": published_time or existing.get("published_time") or (f"{formatted_date}T00:00:00" if formatted_date else None),
+        "input_type": input_type,
+        "file_path": input_path_str,
+        "subtitle_path": input_path_str if input_type == "subtitle" else None,
+        "subtitle_probe_result": subtitle_probe_result,
+        "download_time": datetime.now(timezone.utc).isoformat(),
+        "status": STATUS_INPUT_READY,
+        "metadata": {
+            "id": video_id,
+            "description": existing_metadata.get("description", ""),
+            "duration": duration_seconds,
+            "feed_url": feed_url,
+        },
+    }
+    return payload
+
+def get_channel_videos(
+    url,
+    dateafter="20260101",
+    video_cache=None,
+    refresh_cache=False,
+    cache_ttl_seconds=24 * 3600,
+):
     if video_cache is not None and url in video_cache:
         cached_data = video_cache[url]
-        if cached_data.get("dateafter", "99999999") <= dateafter:
-            logging.info(f"⚡ 命中本地元数据缓存: {url} (本地包含自 {cached_data['dateafter']} 的记录)")
+        usable, reason = is_cache_entry_usable(
+            cached_data,
+            dateafter=dateafter,
+            cache_ttl_seconds=cache_ttl_seconds,
+            refresh_cache=refresh_cache,
+        )
+        if usable:
+            logging.info(f"⚡ 命中本地元数据缓存: {url} (cache_dateafter={cached_data.get('dateafter')})")
             vids = cached_data.get("videos", [])
-            # 返回 >= dateafter 的所有记录
-            return [v for v in vids if v["upload_date"] >= dateafter]
+            return [v for v in vids if str(v.get("upload_date", "")) >= dateafter]
+        logging.info(f"🕒 缓存未命中，原因: {reason} | {url}")
 
     api_key = os.getenv("YOUTUBE_DATA_API_KEY")
     if not api_key:
@@ -124,12 +363,10 @@ def get_channel_videos(url, dateafter="20260101", video_cache=None):
         if page_token:
             params["pageToken"] = page_token
             
-        r = requests.get(base_url, params=params)
-        if r.status_code != 200:
-            logging.error(f"❌ YouTube API search 请求失败: {r.text}")
+        data = request_json_with_retry(base_url, params, "YouTube API search")
+        if not data:
             break
-            
-        data = r.json()
+
         items = data.get("items", [])
         if not items:
             break
@@ -145,28 +382,27 @@ def get_channel_videos(url, dateafter="20260101", video_cache=None):
             "id": ",".join(video_ids),
             "key": api_key
         }
-        vr = requests.get(v_url, params=v_params)
+        v_data = request_json_with_retry(v_url, v_params, "YouTube API videos")
         durations = {}
-        if vr.status_code == 200:
-            v_data = vr.json()
+        if v_data:
             for v in v_data.get("items", []):
                 vid = v["id"]
                 dur_str = v["contentDetails"]["duration"]
                 durations[vid] = parse_iso_duration(dur_str)
         else:
-            logging.error(f"❌ YouTube API videos 请求失败: {vr.text}")
+            logging.warning("⚠️ YouTube API videos 未返回有效数据，本页将使用默认时长 0。")
             
         for item in items:
             vid = item["id"]["videoId"]
             title = item["snippet"]["title"]
             pub_date = item["snippet"]["publishedAt"]
             pub_date_flat = pub_date[:10].replace("-", "")
-            dur = durations.get(vid, 0)
+            dur = durations.get(vid)
             
             title_lower = title.lower()
             if "#shorts" in title_lower or "shorts" in title_lower.split():
                 continue
-            if dur < 180:
+            if dur is not None and dur < 180:
                 continue
                 
             videos.append({
@@ -174,7 +410,8 @@ def get_channel_videos(url, dateafter="20260101", video_cache=None):
                 "url": f"https://www.youtube.com/watch?v={vid}",
                 "title": title,
                 "upload_date": pub_date_flat,
-                "duration": dur
+                "published_time": pub_date,
+                "duration": int(dur or 0),
             })
             
         page_token = data.get("nextPageToken")
@@ -184,7 +421,8 @@ def get_channel_videos(url, dateafter="20260101", video_cache=None):
     if video_cache is not None:
         video_cache[url] = {
             "dateafter": dateafter,
-            "videos": videos
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "videos": videos,
         }
         video_cache["_updated"] = True
             
@@ -222,7 +460,29 @@ def main():
     parser.add_argument("--batch-size", type=int, default=5, help="单次处理的最大视频数量")
     parser.add_argument("--dateafter", type=str, default="20260101", help="YYYYMMDD，回溯起始日期")
     parser.add_argument("--only-download", action="store_true", help="只下载，不运行分析和同步")
+    parser.add_argument("--refresh-cache", action="store_true", help="忽略本地 video cache，强制刷新频道元数据")
+    parser.add_argument(
+        "--cache-ttl-hours",
+        type=int,
+        default=BACKFILL_CACHE_TTL_HOURS_DEFAULT,
+        help=f"本地 video cache TTL（小时，0=禁用缓存，默认 {BACKFILL_CACHE_TTL_HOURS_DEFAULT}）",
+    )
     args = parser.parse_args()
+    if args.batch_size <= 0:
+        logging.error("❌ --batch-size 必须大于 0")
+        sys.exit(1)
+    if not re.match(r"^\d{8}$", args.dateafter or ""):
+        logging.error("❌ --dateafter 格式错误，必须为 YYYYMMDD")
+        sys.exit(1)
+    if args.cache_ttl_hours < 0:
+        logging.error("❌ --cache-ttl-hours 不能小于 0")
+        sys.exit(1)
+    cache_ttl_seconds = args.cache_ttl_hours * 3600
+    logging.info(
+        f"回填参数: dateafter={args.dateafter}, batch_size={args.batch_size}, "
+        f"refresh_cache={args.refresh_cache}, cache_ttl_hours={args.cache_ttl_hours}, "
+        f"api_timeout={BACKFILL_API_TIMEOUT_SECONDS}s, api_retries={BACKFILL_API_MAX_RETRIES}"
+    )
 
     if not CHANNELS_FILE.exists():
         logging.error(f"❌ 找不到 channels.yaml: {CHANNELS_FILE}")
@@ -233,167 +493,277 @@ def main():
 
     tracker = load_backfill_history()
     video_cache = load_video_cache()
-    
+
     candidates = []
     for ch in channels:
         name = ch.get("name", "Unknown")
         host = ch.get("host", name)
         url = ch.get("url")
-        if not url: continue
-        
-        feed_dict = tracker.setdefault(url, {})
-        v_list = get_channel_videos(url, dateafter=args.dateafter, video_cache=video_cache)
-        
+        if not url:
+            continue
+
+        feed_dict = tracker.get(url)
+        if not isinstance(feed_dict, dict):
+            feed_dict = {}
+            tracker[url] = feed_dict
+
+        v_list = get_channel_videos(
+            url,
+            dateafter=args.dateafter,
+            video_cache=video_cache,
+            refresh_cache=args.refresh_cache,
+            cache_ttl_seconds=cache_ttl_seconds,
+        )
         for v in v_list:
             vid = v.get("id")
-            if vid in feed_dict:
+            if not vid:
                 continue
-            candidates.append((url, name, host, v))
-            
+            record = feed_dict.get(vid)
+            if get_record_status(record) == STATUS_DONE:
+                continue
+            candidates.append((url, name, host, v, record))
+
+    if video_cache.pop("_updated", False):
+        save_video_cache(video_cache)
+
     if not candidates:
-        logging.info("🎉 恭喜！所选频道的历史视频已全部回溯完成。")
+        logging.info("🎉 恭喜！所选频道的历史视频已全部回溯完成（status=done）。")
         sys.exit(0)
-        
-    logging.info(f"📊 发现 {len(candidates)} 个尚未处理的历史视频。")
-    
+
+    logging.info(f"📊 发现 {len(candidates)} 个未完成状态的视频（待准备输入或待同步）。")
+
     def get_date(v_tuple):
         v = v_tuple[3]
         return v.get("upload_date", "99999999")
-        
-    if video_cache.pop("_updated", False):
-        save_video_cache(video_cache)
-        
+
     candidates.sort(key=get_date)
-    
     batch = candidates[:args.batch_size]
-    logging.info(f"💼 截取当批次最早发布记录的 {len(batch)} 个视频开始全流程管线 (最早日期: {get_date(batch[0])})...")
+    logging.info(
+        f"💼 选取当批次最早发布的 {len(batch)} 个视频执行 (最早日期: {get_date(batch[0])}) "
+        f"| subtitle_first={SUBTITLE_FIRST_ENABLED}, subtitle_to_asr_fallback={SUBTITLE_TO_ASR_FALLBACK}"
+    )
 
-    downloaded_files = []
-    
-    for feed_url, ch_name, ch_host, v_info in batch:
-        vid = v_info.get("id")
-        v_url = v_info.get("url") or f"https://www.youtube.com/watch?v={vid}"
-        
-        expected_path = download_audio(v_url, vid)
-        if not expected_path or not expected_path.exists():
-            logging.error(f"⚠️ 指定路径音频不存在，跳过: {expected_path}")
+    SUBTITLE_DIR.mkdir(parents=True, exist_ok=True)
+    downloaded_audio = []
+    batch_context = []
+
+    for feed_url, ch_name, ch_host, v_info, old_record in batch:
+        vid = str(v_info.get("id", "")).strip()
+        if not vid:
             continue
-            
-        downloaded_files.append(expected_path)
-        
-        # Format upload_date from YYYYMMDD to YYYY-MM-DD for consistency
-        pub_raw = v_info.get("upload_date", "")
-        formatted_date = f"{pub_raw[:4]}-{pub_raw[4:6]}-{pub_raw[6:8]}" if len(pub_raw) >= 8 else ""
+        v_url = v_info.get("url") or f"https://www.youtube.com/watch?v={vid}"
+        old_status = get_record_status(old_record)
+        existing_input_path = resolve_input_path(old_record)
 
-        # Align EXACTLY with what `src/ytbnotes/analyzer/metadata.py` get_video_metadata expects
-        tracker[feed_url][vid] = {
+        input_path = None
+        input_type = "audio"
+        subtitle_probe_result = old_record.get("subtitle_probe_result") if isinstance(old_record, dict) else None
+
+        if existing_input_path and old_status in {"", STATUS_INPUT_READY, STATUS_ANALYZED, STATUS_FAILED_ANALYZE, STATUS_FAILED_SYNC}:
+            input_path = existing_input_path
+            input_type = str((old_record or {}).get("input_type", "audio")).strip().lower() or "audio"
+            logging.info(f"♻️ 复用现有输入: vid={vid}, status={old_status}, path={input_path}")
+        else:
+            if SUBTITLE_FIRST_ENABLED:
+                logging.info(f"📝 字幕优先探测: {v_url}")
+                try:
+                    subtitle_result = load_subtitle_transcript(v_url)
+                except Exception as e:
+                    subtitle_result = {
+                        "ok": False,
+                        "probe": {"ok": False, "reason": f"exception:{type(e).__name__}"},
+                        "quality": None,
+                        "error": f"subtitle_exception:{type(e).__name__}:{e}",
+                        "lang_family": None,
+                        "source": None,
+                    }
+                subtitle_probe_result = {
+                    "ok": bool(subtitle_result.get("ok")),
+                    "probe": subtitle_result.get("probe"),
+                    "quality": subtitle_result.get("quality"),
+                    "error": subtitle_result.get("error"),
+                    "lang_family": subtitle_result.get("lang_family"),
+                    "source": subtitle_result.get("source"),
+                }
+                if subtitle_result.get("ok") and subtitle_result.get("transcript"):
+                    try:
+                        subtitle_abs = save_subtitle_text(
+                            video_id=vid,
+                            channel_name=ch_name,
+                            video_title=v_info.get("title", ""),
+                            upload_date=v_info.get("upload_date", ""),
+                            transcript=subtitle_result.get("transcript", ""),
+                        )
+                        input_path = subtitle_abs
+                        input_type = "subtitle"
+                        logging.info(f"✅ 命中字幕并保存，跳过音频下载: {subtitle_abs}")
+                    except Exception as e:
+                        logging.warning(f"⚠️ 字幕保存失败，准备回退音频: vid={vid}, err={e}")
+                else:
+                    err_msg = subtitle_result.get("error") or "subtitle_not_available"
+                    if not SUBTITLE_TO_ASR_FALLBACK:
+                        logging.warning(f"⏭️ 字幕不可用且禁用回退，跳过视频: vid={vid}, reason={err_msg}")
+                        continue
+                    logging.info(f"字幕不可用或质量不达标，回退音频下载: vid={vid}, reason={err_msg}")
+
+            if input_path is None:
+                expected_path = download_audio(v_url, vid)
+                if not expected_path or not expected_path.exists():
+                    logging.error(f"⚠️ 音频下载失败，跳过: vid={vid}, path={expected_path}")
+                    continue
+                input_path = expected_path.resolve()
+                input_type = "audio"
+                downloaded_audio.append((feed_url, vid, input_path))
+
+        tracker[feed_url][vid] = build_tracker_record(
+            record=old_record,
+            video_id=vid,
+            feed_url=feed_url,
+            channel_name=ch_name,
+            host=ch_host,
+            video_url=v_url,
+            video_title=v_info.get("title", ""),
+            upload_date_yyyymmdd=v_info.get("upload_date", ""),
+            published_time=v_info.get("published_time"),
+            duration_seconds=int(v_info.get("duration", 0) or 0),
+            input_type=input_type,
+            input_path=input_path,
+            subtitle_probe_result=subtitle_probe_result,
+        )
+        batch_context.append({
+            "feed_url": feed_url,
             "video_id": vid,
-            "download_time": datetime.now(timezone.utc).isoformat(),
-            "file_path": str(expected_path),
-            "title": v_info.get("title", ""),
-            "channel_name": ch_name,
-            "host": ch_host,
-            "original_url": v_url,
-            "upload_date": formatted_date,
-            "metadata": {
-                "id": vid,
-                "description": v_info.get("description", ""),
-                "duration": v_info.get("duration", 0)
-            }
-        }
-        
+            "input_path": input_path,
+        })
+
     save_backfill_history(tracker)
-    
+
     if args.only_download:
-        logging.info("⏹️ `--only-download` 被设置，终止后续分析管道。")
+        logging.info("⏹️ `--only-download` 被设置，终止后续分析与同步。")
         sys.exit(0)
-        
-    if not downloaded_files:
-        logging.warning("⚠️ 没有成功下载任何音频，取消分析管道。")
+
+    if not batch_context:
+        logging.warning("⚠️ 当批次没有可用输入，取消分析与同步。")
         sys.exit(1)
-        
+
     logging.info("\n🚀 ================= 开始分析管道 =================")
     env = os.environ.copy()
     env["TRACKING_FILE"] = str(BACKFILL_FILE)
-    
-    try:
-        subprocess.run(
-            [PYTHON, str(PROJECT_DIR / "audio_analyzer.py")],
-            env=env, cwd=str(PROJECT_DIR), check=True
-        )
-    except subprocess.CalledProcessError as e:
-        logging.error(f"❌ 分析管道异常终止: exit_code {e.returncode}")
-        sys.exit(1)
-        
-    logging.info("\n📋 ================= 开始同步管道 =================")
-    try:
-        subprocess.run(
-            [PYTHON, str(PROJECT_DIR / "obsidian_sync.py")],
-            env=env, cwd=str(PROJECT_DIR), check=True
-        )
-    except subprocess.CalledProcessError as e:
-        logging.error(f"❌ 同步管道异常终止: exit_code {e.returncode}")
-        sys.exit(1)
-        
-    logging.info("\n🧹 ================= 清理当批次环境 =================")
+    analyze_rc = subprocess.run(
+        [PYTHON, str(PROJECT_DIR / "audio_analyzer.py")],
+        env=env, cwd=str(PROJECT_DIR), check=False
+    ).returncode
+    if analyze_rc != 0:
+        logging.error(f"❌ 分析管道返回非零退出码: {analyze_rc}")
+
     analysis_log_path = DATA_DIR / "analysis_log.json"
-    successful_vids = set()
-    log_data = []
-    
+    path_to_vid = {}
+    for ctx in batch_context:
+        path_to_vid[str(Path(ctx["input_path"]).resolve())] = (ctx["feed_url"], ctx["video_id"])
+
+    latest_log_by_vid = {}
     if analysis_log_path.exists():
         try:
             with open(analysis_log_path, "r", encoding="utf-8") as f:
                 log_data = json.load(f)
-            successful_vids = set()
             for entry in log_data:
-                if entry.get("status") == "success" and entry.get("video_file_path"):
-                    try:
-                        successful_vids.add(Path(entry["video_file_path"]).stem)
-                    except:
-                        pass
-        except Exception as e:
-            logging.warning(f"⚠️ 读取分析日志时出错: {e}")
-
-    # 1. 仅删除成功分析的音频，失败的保留供下次重试
-    for fp in downloaded_files:
-        vid = fp.stem
-        if vid in successful_vids and fp.exists():
-            try:
-                fp.unlink()
-                logging.info(f"🗑️ 已成功分析并删除音频: {fp}")
-            except Exception as e:
-                logging.warning(f"⚠️ 删除失败: {fp} - {e}")
-        elif fp.exists():
-            logging.warning(f"⚠️ 视频 {vid} 未显示成功状态，保留音频以备重试: {fp}")
-
-    # 2. 从日常日志中隐去本次的大批量测试足迹防止污染
-    if log_data:
-        try:
-            processed_vids = {v_tuple[3].get("id") for v_tuple in batch}
-            initial_count = len(log_data)
-            
-            # 过滤掉属于本次回溯批次的视频记录
-            filtered_logs = []
-            for entry in log_data:
-                v_path = entry.get("video_file_path")
-                if not v_path:
-                    filtered_logs.append(entry)
+                raw_path = entry.get("video_file_path")
+                if not raw_path:
                     continue
                 try:
-                    entry_vid = Path(v_path).stem
-                    if entry_vid not in processed_vids:
-                        filtered_logs.append(entry)
-                except:
-                    filtered_logs.append(entry)
-            
-            if len(filtered_logs) < initial_count:
-                with open(analysis_log_path, "w", encoding="utf-8") as f:
-                    json.dump(filtered_logs, f, indent=2, ensure_ascii=False)
-                logging.info(f"✨ 已从 analysis_log.json 中彻底移除 {initial_count - len(filtered_logs)} 条回溯记录足迹。")
+                    resolved_path = str(Path(raw_path).resolve())
+                except Exception:
+                    continue
+                feed_vid = path_to_vid.get(resolved_path)
+                if not feed_vid:
+                    continue
+                _, vid = feed_vid
+                latest_log_by_vid[vid] = entry
         except Exception as e:
-            logging.warning(f"⚠️ 清理分析日志时出错: {e}")
+            logging.warning(f"⚠️ 读取 analysis_log.json 失败，无法精确回写分析状态: {e}")
 
-    logging.info("\n✅ 当批次历史回退已完美结束！")
+    analyzed_targets = []
+    for ctx in batch_context:
+        feed_url = ctx["feed_url"]
+        vid = ctx["video_id"]
+        rec = tracker.get(feed_url, {}).get(vid)
+        if not isinstance(rec, dict):
+            continue
+        latest = latest_log_by_vid.get(vid)
+        current_status = get_record_status(rec)
+        if latest and latest.get("status") == "success":
+            rec["status"] = STATUS_ANALYZED
+            rec["analyze_time"] = datetime.now(timezone.utc).isoformat()
+            rec["analysis_error"] = None
+            analyzed_targets.append((feed_url, vid))
+        elif current_status == STATUS_ANALYZED:
+            analyzed_targets.append((feed_url, vid))
+        elif current_status != STATUS_DONE:
+            rec["status"] = STATUS_FAILED_ANALYZE
+            rec["analysis_error"] = (latest or {}).get("error_message") or f"analyzer_rc={analyze_rc}"
+
+    save_backfill_history(tracker)
+
+    sync_candidates = []
+    for feed_url, vid in analyzed_targets:
+        rec = tracker.get(feed_url, {}).get(vid)
+        if isinstance(rec, dict) and get_record_status(rec) == STATUS_ANALYZED:
+            sync_candidates.append((feed_url, vid))
+
+    if sync_candidates:
+        logging.info("\n📋 ================= 开始同步管道 =================")
+        sync_rc = subprocess.run(
+            [PYTHON, str(PROJECT_DIR / "obsidian_sync.py")],
+            env=env, cwd=str(PROJECT_DIR), check=False
+        ).returncode
+        if sync_rc == 0:
+            for feed_url, vid in sync_candidates:
+                rec = tracker.get(feed_url, {}).get(vid)
+                if not isinstance(rec, dict):
+                    continue
+                rec["status"] = STATUS_DONE
+                rec["sync_time"] = datetime.now(timezone.utc).isoformat()
+                rec["sync_error"] = None
+            logging.info(f"✅ 同步成功，已标记 done: {len(sync_candidates)} 条。")
+        else:
+            for feed_url, vid in sync_candidates:
+                rec = tracker.get(feed_url, {}).get(vid)
+                if not isinstance(rec, dict):
+                    continue
+                rec["status"] = STATUS_FAILED_SYNC
+                rec["sync_error"] = f"sync_rc={sync_rc}"
+            logging.error(f"❌ 同步管道返回非零退出码: {sync_rc}")
+    else:
+        logging.info("ℹ️ 本批次无可同步条目，跳过同步步骤。")
+
+    save_backfill_history(tracker)
+
+    logging.info("\n🧹 ================= 清理当批次环境 =================")
+    for feed_url, vid, audio_path in downloaded_audio:
+        rec = tracker.get(feed_url, {}).get(vid)
+        status = get_record_status(rec)
+        if status in {STATUS_ANALYZED, STATUS_DONE, STATUS_FAILED_SYNC} and audio_path.exists():
+            try:
+                audio_path.unlink()
+                logging.info(f"🗑️ 删除已完成分析的当批音频: {audio_path}")
+            except Exception as e:
+                logging.warning(f"⚠️ 删除失败: {audio_path} - {e}")
+        elif audio_path.exists():
+            logging.warning(f"⚠️ 保留音频等待重试: vid={vid}, status={status}, path={audio_path}")
+
+    failed_in_batch = []
+    for ctx in batch_context:
+        feed_url = ctx["feed_url"]
+        vid = ctx["video_id"]
+        status = get_record_status(tracker.get(feed_url, {}).get(vid))
+        if status not in {STATUS_DONE, STATUS_ANALYZED}:
+            failed_in_batch.append((vid, status))
+
+    if failed_in_batch:
+        logging.warning(f"⚠️ 当批次存在未完成条目: {failed_in_batch}")
+        sys.exit(1)
+
+    logging.info("\n✅ 当批次历史回溯已完成。")
 
 if __name__ == "__main__":
     main()

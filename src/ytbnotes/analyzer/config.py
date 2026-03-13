@@ -63,9 +63,13 @@ TRANSCRIPT_MODE = _transcript_mode_raw if _transcript_mode_raw in {"auto", "subt
 _subtitle_langs_raw = os.getenv("SUBTITLE_PREFERRED_LANGS", "en,en-us,en-gb,zh-hans,zh,zh-tw,zh-hant").strip()
 SUBTITLE_PREFERRED_LANGS = [lang.strip().lower() for lang in _subtitle_langs_raw.split(",") if lang.strip()]
 
-# 是否允许 YouTube 自动字幕（auto_captions）作为最后兜底，默认关闭（质量不稳定）
-_allow_auto_raw = os.getenv("SUBTITLE_ALLOW_AUTO_CAPTIONS", "0").strip().lower()
+# 是否允许 YouTube 自动字幕（auto_captions）作为兜底，默认开启
+_allow_auto_raw = os.getenv("SUBTITLE_ALLOW_AUTO_CAPTIONS", "1").strip().lower()
 SUBTITLE_ALLOW_AUTO_CAPTIONS = _allow_auto_raw in {"1", "true", "yes", "on"}
+
+# 允许使用自动字幕的语言族白名单（逗号分隔），默认仅英文
+_auto_lang_raw = os.getenv("SUBTITLE_AUTO_CAPTION_LANG_FAMILIES", "en").strip().lower()
+SUBTITLE_AUTO_CAPTION_LANG_FAMILIES = {f.strip() for f in _auto_lang_raw.split(",") if f.strip()}
 
 try:
     SUBTITLE_PROBE_TIMEOUT = int(os.getenv("SUBTITLE_PROBE_TIMEOUT", "120"))
