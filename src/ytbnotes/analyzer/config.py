@@ -8,7 +8,8 @@ load_dotenv()
 PROJECT_DIR          = Path(__file__).resolve().parent.parent.parent.parent
 
 # --- 存储路径 ---
-HISTORY_FILE         = str(PROJECT_DIR / 'data' / 'download_history.json')
+_custom_tracker = os.getenv("TRACKING_FILE")
+HISTORY_FILE         = str(Path(_custom_tracker).resolve()) if _custom_tracker else str(PROJECT_DIR / 'data' / 'download_history.json')
 AUDIO_DIR            = str(PROJECT_DIR / 'data' / 'audio')
 ANALYSIS_RESULTS_DIR = str(PROJECT_DIR / 'data' / 'results')
 ANALYSIS_LOG_FILE    = str(PROJECT_DIR / 'data' / 'analysis_log.json')

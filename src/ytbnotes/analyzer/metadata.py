@@ -61,7 +61,7 @@ def find_videos_to_process(history_file, analysis_log_file) -> Result:
                     current_filepath = Path(details['file_path']).resolve()
                     current_filepath_str = str(current_filepath)
                     if not current_filepath.exists():
-                        logging.warning(f"文件不存在，跳过: {current_filepath_str}")
+                        logging.debug(f"文件不存在，跳过: {current_filepath_str}")
                         skipped_exist_count += 1
                         continue
                     if current_filepath_str in successfully_analyzed_paths:
