@@ -29,10 +29,13 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
         avg_returns = {}
         verified_count = 0
 
+        window_metrics = {}
         for window in ("30d", "90d", "180d"):
             wins = 0
             losses = 0
             returns = []
+            win_returns = []
+            loss_returns = []
             for op in ops:
                 snap = op.verification.snapshots.get(window)
                 if not snap or snap.result not in ("win", "loss"):
@@ -43,6 +46,10 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
                     losses += 1
                 if snap.return_pct is not None:
                     returns.append(snap.return_pct)
+                    if snap.result == "win":
+                        win_returns.append(snap.return_pct)
+                    else:
+                        loss_returns.append(snap.return_pct)
 
             decided = wins + losses
             if decided > 0:
@@ -51,7 +58,30 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
             else:
                 win_rates[window] = None
 
-            avg_returns[window] = round(sum(returns) / len(returns), 4) if returns else None
+            avg_returns[window] = (
+                round(sum(returns) / len(returns), 4) if returns else None
+            )
+            avg_win = (
+                round(sum(win_returns) / len(win_returns), 4) if win_returns else None
+            )
+            avg_loss = (
+                round(sum(loss_returns) / len(loss_returns), 4)
+                if loss_returns
+                else None
+            )
+            max_loss = min(loss_returns) if loss_returns else None
+            pl_ratio = (
+                round(avg_win / abs(avg_loss), 2)
+                if avg_win and avg_loss and avg_loss != 0
+                else None
+            )
+
+            window_metrics[window] = {
+                "avg_win_return": avg_win,
+                "avg_loss_return": avg_loss,
+                "max_single_loss": max_loss,
+                "profit_loss_ratio": pl_ratio,
+            }
 
         # 信誉分：加权胜率 (30d * 0.2 + 90d * 0.3 + 180d * 0.5)，范围 0-10
         score_parts = []
@@ -61,7 +91,9 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
             if win_rates.get(w) is not None:
                 score_parts.append(win_rates[w] * wt)
                 total_weight += wt
-        credibility = round(sum(score_parts) / total_weight * 10, 1) if total_weight > 0 else None
+        credibility = (
+            round(sum(score_parts) / total_weight * 10, 1) if total_weight > 0 else None
+        )
 
         # 找擅长 / 差的 tickers
         ticker_wins: dict[str, int] = defaultdict(int)
@@ -76,21 +108,30 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
         best = sorted(ticker_wins, key=ticker_wins.get, reverse=True)[:3]
         worst = sorted(ticker_losses, key=ticker_losses.get, reverse=True)[:3]
 
-        active = sum(1 for op in ops if op.verification.status in ("pending", "partial"))
+        active = sum(
+            1 for op in ops if op.verification.status in ("pending", "partial")
+        )
 
-        profiles.append({
-            "channel": channel,
-            "analyst": analyst,
-            "total_opinions": total,
-            "verified_opinions": verified_count,
-            "win_rate": win_rates,
-            "avg_return": avg_returns,
-            "best_tickers": best,
-            "worst_tickers": worst,
-            "active_opinions": active,
-            "credibility_score": credibility,
-            "sample_sufficient": verified_count >= 30,
-        })
+        metrics_90d = window_metrics.get("90d", {})
+        profiles.append(
+            {
+                "channel": channel,
+                "analyst": analyst,
+                "total_opinions": total,
+                "verified_opinions": verified_count,
+                "win_rate": win_rates,
+                "avg_return": avg_returns,
+                "profit_loss_ratio": metrics_90d.get("profit_loss_ratio"),
+                "max_single_loss": metrics_90d.get("max_single_loss"),
+                "avg_win_return": metrics_90d.get("avg_win_return"),
+                "avg_loss_return": metrics_90d.get("avg_loss_return"),
+                "best_tickers": best,
+                "worst_tickers": worst,
+                "active_opinions": active,
+                "credibility_score": credibility,
+                "sample_sufficient": verified_count >= 30,
+            }
+        )
 
     # 按 90d 胜率排序
     profiles.sort(
@@ -118,8 +159,14 @@ def compute_ticker_consensus(opinions: list[Opinion]) -> list[dict]:
         neutral = [op for op in ops if op.sentiment == "neutral"]
 
         # 收集目标价 / 支撑价
-        targets = [op.prediction.target_price for op in ops if op.prediction.target_price]
-        supports = [op.prediction.price for op in ops if op.prediction.type in ("support", "entry_zone") and op.prediction.price]
+        targets = [
+            op.prediction.target_price for op in ops if op.prediction.target_price
+        ]
+        supports = [
+            op.prediction.price
+            for op in ops
+            if op.prediction.type in ("support", "entry_zone") and op.prediction.price
+        ]
 
         # 加权情绪 (用各博主 90d 胜率加权)
         total_weight = 0
@@ -131,11 +178,17 @@ def compute_ticker_consensus(opinions: list[Opinion]) -> list[dict]:
                 # 简化：用该条的结果近似
                 wr = 1.0 if snap.result == "win" else 0.0
             weight = wr
-            direction_val = 1.0 if op.sentiment == "bullish" else (-1.0 if op.sentiment == "bearish" else 0.0)
+            direction_val = (
+                1.0
+                if op.sentiment == "bullish"
+                else (-1.0 if op.sentiment == "bearish" else 0.0)
+            )
             sentiment_score += direction_val * weight
             total_weight += weight
 
-        weighted_sentiment = round(sentiment_score / total_weight, 2) if total_weight > 0 else 0
+        weighted_sentiment = (
+            round(sentiment_score / total_weight, 2) if total_weight > 0 else 0
+        )
 
         # 每个博主的摘要
         seen_analysts = set()
@@ -146,27 +199,35 @@ def compute_ticker_consensus(opinions: list[Opinion]) -> list[dict]:
                 continue
             seen_analysts.add(key)
             snap = op.verification.snapshots.get("90d")
-            top_analysts.append({
-                "analyst": op.analyst,
-                "channel": op.channel,
-                "sentiment": op.sentiment,
-                "win_rate_90d": None,  # 在实际使用时从 profiles 交叉查
-            })
+            top_analysts.append(
+                {
+                    "analyst": op.analyst,
+                    "channel": op.channel,
+                    "sentiment": op.sentiment,
+                    "win_rate_90d": None,  # 在实际使用时从 profiles 交叉查
+                }
+            )
 
-        consensus_list.append({
-            "ticker": ticker,
-            "company_name": company,
-            "active_opinions": len(ops),
-            "consensus": {
-                "bullish_count": len(bullish),
-                "bearish_count": len(bearish),
-                "neutral_count": len(neutral),
-                "weighted_sentiment": weighted_sentiment,
-                "avg_target_price": round(sum(targets) / len(targets), 2) if targets else None,
-                "avg_support_price": round(sum(supports) / len(supports), 2) if supports else None,
-            },
-            "top_analysts": top_analysts,
-        })
+        consensus_list.append(
+            {
+                "ticker": ticker,
+                "company_name": company,
+                "active_opinions": len(ops),
+                "consensus": {
+                    "bullish_count": len(bullish),
+                    "bearish_count": len(bearish),
+                    "neutral_count": len(neutral),
+                    "weighted_sentiment": weighted_sentiment,
+                    "avg_target_price": round(sum(targets) / len(targets), 2)
+                    if targets
+                    else None,
+                    "avg_support_price": round(sum(supports) / len(supports), 2)
+                    if supports
+                    else None,
+                },
+                "top_analysts": top_analysts,
+            }
+        )
 
     consensus_list.sort(key=lambda c: c["active_opinions"], reverse=True)
     return consensus_list
@@ -181,12 +242,14 @@ def print_summary(profiles: list[dict], consensus: list[dict]) -> None:
         wr_parts = []
         for w in ("30d", "90d", "180d"):
             v = p["win_rate"].get(w)
-            wr_parts.append(f"{v*100:.0f}%" if v is not None else "N/A")
+            wr_parts.append(f"{v * 100:.0f}%" if v is not None else "N/A")
         suf = " ⚠️样本不足" if not p["sample_sufficient"] else ""
         score = f"⭐{p['credibility_score']}" if p["credibility_score"] else "N/A"
-        print(f"  {p['analyst']} ({p['channel']}) — "
-              f"观点:{p['total_opinions']} 已验:{p['verified_opinions']} "
-              f"胜率: {'/'.join(wr_parts)} 信誉:{score}{suf}")
+        print(
+            f"  {p['analyst']} ({p['channel']}) — "
+            f"观点:{p['total_opinions']} 已验:{p['verified_opinions']} "
+            f"胜率: {'/'.join(wr_parts)} 信誉:{score}{suf}"
+        )
 
     if consensus:
         print(f"\n{'=' * 60}")
@@ -194,8 +257,12 @@ def print_summary(profiles: list[dict], consensus: list[dict]) -> None:
         print("=" * 60)
         for c in consensus[:10]:
             cons = c["consensus"]
-            target = f"${cons['avg_target_price']}" if cons["avg_target_price"] else "N/A"
-            print(f"  {c['ticker']} ({c['company_name']}) — "
-                  f"🟢{cons['bullish_count']} 🔴{cons['bearish_count']} ⚪{cons['neutral_count']} "
-                  f"加权情绪:{cons['weighted_sentiment']:+.2f} 平均目标:{target}")
+            target = (
+                f"${cons['avg_target_price']}" if cons["avg_target_price"] else "N/A"
+            )
+            print(
+                f"  {c['ticker']} ({c['company_name']}) — "
+                f"🟢{cons['bullish_count']} 🔴{cons['bearish_count']} ⚪{cons['neutral_count']} "
+                f"加权情绪:{cons['weighted_sentiment']:+.2f} 平均目标:{target}"
+            )
     print()

@@ -21,7 +21,7 @@ DEFAULT_CONFIG_PATH = _PROJECT_DIR / "config.yaml"
 
 def _load_vault_index_dir(config_path: Path | None = None) -> Path | None:
     """从 config.yaml 中读取 index 文件夹（即 00-MOC-索引）的绝对路径。
-    
+
     config.yaml 结构：
       paths:
         vault: /path/to/obsidian/vault
@@ -79,18 +79,26 @@ def render_opinion_dashboard(
     lines.append("")
     lines.append("# 📊 01 — 个股观点追踪 (Opinion Tracker)")
     lines.append("")
-    lines.append(f"> 自动生成 · {generated_at} · 追踪观点 **{total_opinions}** 条 · 待验证 **{active_opinions}** 条")
+    lines.append(
+        f"> 自动生成 · {generated_at} · 追踪观点 **{total_opinions}** 条 · 待验证 **{active_opinions}** 条"
+    )
     lines.append("")
     lines.append("> [!NOTE]")
-    lines.append("> 所有观点均以**发布时间点锁定**，博主后续更新/反转将作为新观点单独记录。")
+    lines.append(
+        "> 所有观点均以**发布时间点锁定**，博主后续更新/反转将作为新观点单独记录。"
+    )
     lines.append("> 胜率 = 在 30 / 90 / 180 天窗口内实现预期的观点比例。")
     lines.append("")
 
     # ── 博主胜率排行 ──────────────────────────────────────────────────────────
     lines.append("## 🏅 博主信誉排行")
     lines.append("")
-    lines.append("| 博主 | 频道 | 观点数 | 已验证 | 30d 胜率 | 90d 胜率 | 180d 胜率 | 信誉分 |")
-    lines.append("|------|------|--------|--------|----------|----------|-----------|--------|")
+    lines.append(
+        "| 博主 | 频道 | 观点数 | 已验证 | 30d 胜率 | 90d 胜率 | 180d 胜率 | 盈亏比 | 最大单笔亏损 | 平均盈利 | 平均亏损 | 信誉分 |"
+    )
+    lines.append(
+        "|------|------|--------|--------|----------|----------|-----------|--------|--------------|----------|----------|--------|"
+    )
 
     for p in profiles:
         analyst = p.get("analyst") or p.get("channel", "?")
@@ -107,24 +115,45 @@ def render_opinion_dashboard(
             ico = "🔥" if pct >= 65 else ("✅" if pct >= 50 else "⚠️")
             return f"{ico} {pct}%"
 
+        def fmt_pct(v: float | None) -> str:
+            if v is None:
+                return "—"
+            return f"{v * 100:.1f}%"
+
+        def fmt_ratio(v: float | None) -> str:
+            if v is None:
+                return "—"
+            return f"{v:.2f}"
+
+        pl_ratio = p.get("profit_loss_ratio")
+        max_loss = p.get("max_single_loss")
+        avg_win = p.get("avg_win_return")
+        avg_loss = p.get("avg_loss_return")
+
         score = p.get("credibility_score")
         score_str = f"⭐ {score}" if score else "—"
         insuf = " ⚠️" if not p.get("sample_sufficient") else ""
 
         lines.append(
-            f"| {analyst} | {channel} | {total} | {verified}{insuf} | {fmt_wr('30d')} | {fmt_wr('90d')} | {fmt_wr('180d')} | {score_str} |"
+            f"| {analyst} | {channel} | {total} | {verified}{insuf} | {fmt_wr('30d')} | {fmt_wr('90d')} | {fmt_wr('180d')} | {fmt_ratio(pl_ratio)} | {fmt_pct(max_loss)} | {fmt_pct(avg_win)} | {fmt_pct(avg_loss)} | {score_str} |"
         )
 
     lines.append("")
     lines.append("> [!TIP]")
-    lines.append("> ⚠️ 标注表示验证样本数 < 30，胜率统计尚不具备统计意义。继续积累数据中。")
+    lines.append(
+        "> ⚠️ 标注表示验证样本数 < 30，胜率统计尚不具备统计意义。继续积累数据中。"
+    )
     lines.append("")
 
     # ── 个股多空共识 ──────────────────────────────────────────────────────────
     lines.append("## 📈 个股多空共识")
     lines.append("")
-    lines.append("| 个股 | 公司 | 看多 | 看空 | 观望 | 共识情绪 | 平均目标价 | 博主数 |")
-    lines.append("|------|------|------|------|------|----------|------------|--------|")
+    lines.append(
+        "| 个股 | 公司 | 看多 | 看空 | 观望 | 共识情绪 | 平均目标价 | 博主数 |"
+    )
+    lines.append(
+        "|------|------|------|------|------|----------|------------|--------|"
+    )
 
     for c in consensus:
         ticker = c.get("ticker", "?")
@@ -135,7 +164,9 @@ def render_opinion_dashboard(
         neutral = cons.get("neutral_count", 0)
         ws = cons.get("weighted_sentiment", 0)
         target = cons.get("avg_target_price")
-        analysts = len({a.get("analyst") for a in c.get("top_analysts", []) if a.get("analyst")})
+        analysts = len(
+            {a.get("analyst") for a in c.get("top_analysts", []) if a.get("analyst")}
+        )
 
         target_str = f"${target:.1f}" if target else "—"
         ws_str = f"+{ws:.2f}" if ws >= 0 else f"{ws:.2f}"
@@ -187,15 +218,21 @@ def render_active_opinions_section(opinions: list, profiles: list[dict]) -> list
         analyst = ops[0].analyst if ops else channel
         wr = win_rate_by_channel.get(channel, {})
         wr_90 = wr.get("90d")
-        wr_str = f"{int(wr_90*100)}%" if wr_90 is not None else "积累中"
+        wr_str = f"{int(wr_90 * 100)}%" if wr_90 is not None else "积累中"
 
         lines.append(f"### {analyst} ({channel}) — 90d 胜率: {wr_str}")
         lines.append("")
-        lines.append("| 个股 | 方向 | 观点类型 | 入场价 | 目标价 | 止损 | 置信 | 时效 | 发布日 |")
-        lines.append("|------|------|----------|--------|--------|------|------|------|--------|")
+        lines.append(
+            "| 个股 | 方向 | 观点类型 | 入场价 | 目标价 | 止损 | 置信 | 时效 | 发布日 |"
+        )
+        lines.append(
+            "|------|------|----------|--------|--------|------|------|------|--------|"
+        )
 
         # 按 ticker 分组、按日期降序
-        ops_sorted = sorted(ops, key=lambda o: (o.ticker, o.published_date), reverse=True)
+        ops_sorted = sorted(
+            ops, key=lambda o: (o.ticker, o.published_date), reverse=True
+        )
         seen = set()
         for op in ops_sorted:
             key = (op.ticker, op.prediction.type, op.prediction.price)
@@ -208,17 +245,28 @@ def render_active_opinions_section(opinions: list, profiles: list[dict]) -> list
                 op.prediction.direction, op.prediction.direction
             )
             ptype_label = {
-                "target_price": "目标价", "entry_zone": "入场区", "support": "支撑位",
-                "resistance": "阻力位", "direction_call": "方向判断",
+                "target_price": "目标价",
+                "entry_zone": "入场区",
+                "support": "支撑位",
+                "resistance": "阻力位",
+                "direction_call": "方向判断",
             }.get(op.prediction.type, op.prediction.type)
 
             price = f"${op.prediction.price:.1f}" if op.prediction.price else "—"
-            target = f"${op.prediction.target_price:.1f}" if op.prediction.target_price else "—"
-            stop = f"${op.prediction.stop_loss:.1f}" if op.prediction.stop_loss else "—"
-            conf = {"high": "高 🔥", "medium": "中", "low": "低 🌙"}.get(op.prediction.confidence, "—")
-            horizon = {"short_term": "短线", "medium_term": "中期", "long_term": "长期"}.get(
-                op.prediction.horizon, "—"
+            target = (
+                f"${op.prediction.target_price:.1f}"
+                if op.prediction.target_price
+                else "—"
             )
+            stop = f"${op.prediction.stop_loss:.1f}" if op.prediction.stop_loss else "—"
+            conf = {"high": "高 🔥", "medium": "中", "low": "低 🌙"}.get(
+                op.prediction.confidence, "—"
+            )
+            horizon = {
+                "short_term": "短线",
+                "medium_term": "中期",
+                "long_term": "长期",
+            }.get(op.prediction.horizon, "—")
 
             lines.append(
                 f"| {emoji} **{op.ticker}** | {direction} | {ptype_label} | "
@@ -233,7 +281,9 @@ def render_active_opinions_section(opinions: list, profiles: list[dict]) -> list
             for wk in ("30d", "90d", "180d"):
                 s = snaps.get(wk)
                 if s and s.result:
-                    icon = {"win": "✅", "loss": "❌", "pending": "⏳"}.get(s.result, "?")
+                    icon = {"win": "✅", "loss": "❌", "pending": "⏳"}.get(
+                        s.result, "?"
+                    )
                     parts.append(f"{wk}:{icon}")
             if parts and win_op.ticker:
                 snap_lines.append(f"{win_op.ticker}: {' · '.join(parts)}")
@@ -261,15 +311,20 @@ def write_dashboard_to_vault(
     from src.ytbnotes.tracker.models import NON_VERIFIABLE_TYPES
 
     generated_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    total_opinions = sum(1 for op in opinions if op.prediction.type not in NON_VERIFIABLE_TYPES)
+    total_opinions = sum(
+        1 for op in opinions if op.prediction.type not in NON_VERIFIABLE_TYPES
+    )
     active_opinions = sum(
-        1 for op in opinions
+        1
+        for op in opinions
         if op.prediction.type not in NON_VERIFIABLE_TYPES
         and op.verification.status in ("pending", "partial")
     )
 
     # 主体内容
-    content = render_opinion_dashboard(profiles, consensus, total_opinions, active_opinions, generated_at)
+    content = render_opinion_dashboard(
+        profiles, consensus, total_opinions, active_opinions, generated_at
+    )
 
     # 活跃观点明细
     active_section = render_active_opinions_section(opinions, profiles)
@@ -281,7 +336,9 @@ def write_dashboard_to_vault(
     else:
         index_dir = _load_vault_index_dir(config_path)
         if not index_dir:
-            logging.error("无法从 config.yaml 读取 Vault 索引目录，请检查 vault_root 和 folders.index 配置")
+            logging.error(
+                "无法从 config.yaml 读取 Vault 索引目录，请检查 vault_root 和 folders.index 配置"
+            )
             return None
         out_path = index_dir / "01-Opinion-个股观点追踪.md"
 
