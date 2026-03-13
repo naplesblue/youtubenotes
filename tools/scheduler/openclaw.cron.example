@@ -1,0 +1,10 @@
+# OpenClaw cron template for YoutubeNotes execution line
+# Timezone: Asia/Shanghai
+
+CRON_TZ=Asia/Shanghai
+
+# Daily routine: 09:30 and 21:30
+30 9,21 * * * /bin/bash /Users/Naples/YoutubeNotes/tools/scheduler/run_routine_job.sh
+
+# Weekly discovery: Tuesday and Saturday at 14:00
+0 14 * * 2,6 /bin/bash /Users/Naples/YoutubeNotes/tools/scheduler/run_discovery_job.sh
