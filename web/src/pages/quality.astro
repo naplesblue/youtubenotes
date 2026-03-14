@@ -6,24 +6,12 @@ import type { DashboardData } from '../lib/types';
 import dataRaw from '../../public/data/dashboard.json';
 const data = dataRaw as unknown as DashboardData;
 ---
-<DashboardLayout title="数据质量 — YTNotes Dashboard" current="/quality/">
-  <h1 class="text-2xl font-bold mb-2">数据质量报告</h1>
-  <p class="text-sm text-slate-400 mb-6">
-    自动检测数据中的缺失、冲突和异常，驱动 pipeline 修正
-  </p>
-
-  <div class="mb-4 flex gap-3">
-    {data.data_quality.filter(i => i.severity === 'warning').length > 0 && (
-      <span class="text-xs px-2 py-1 rounded bg-amber-500/15 text-amber-400">
-        {data.data_quality.filter(i => i.severity === 'warning').length} 个警告
-      </span>
-    )}
-    {data.data_quality.filter(i => i.severity === 'info').length > 0 && (
-      <span class="text-xs px-2 py-1 rounded bg-blue-500/15 text-blue-400">
-        {data.data_quality.filter(i => i.severity === 'info').length} 个提示
-      </span>
-    )}
+<DashboardLayout title="数据质量 — YTNotes" current="/quality/">
+  <div class="mb-8">
+    <h1 style="font-size:20px;font-weight:600;margin-bottom:4px;color:var(--color-text);">数据质量</h1>
+    <p style="font-size:13px;color:var(--color-text-muted);">
+      对 {data.stats.total_opinions} 条观点和 {data.stats.total_tickers} 个标的的自动检查
+    </p>
   </div>
-
   <QualityReport client:load issues={data.data_quality} />
 </DashboardLayout>

@@ -6,7 +6,12 @@ import type { DashboardData } from '../lib/types';
 import dataRaw from '../../public/data/dashboard.json';
 const data = dataRaw as unknown as DashboardData;
 ---
-<DashboardLayout title="Ticker 网格 — YTNotes Dashboard" current="/tickers/">
-  <h1 class="text-2xl font-bold mb-6">Ticker 网格</h1>
+<DashboardLayout title="标的 — YTNotes" current="/tickers/">
+  <div class="mb-8">
+    <h1 style="font-size:20px;font-weight:600;margin-bottom:4px;color:var(--color-text);">标的</h1>
+    <p style="font-size:13px;color:var(--color-text-muted);">
+      {data.tickers.length} 个标的 · {data.stats.total_opinions} 条观点
+    </p>
+  </div>
   <TickerGrid client:load tickers={data.tickers} />
 </DashboardLayout>

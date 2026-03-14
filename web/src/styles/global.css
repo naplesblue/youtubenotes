@@ -1,32 +1,220 @@
 @import "tailwindcss";
 
+/* ── Dark theme (default) ── */
 :root {
-  --bg-primary: #0f172a;
-  --bg-secondary: #1e293b;
-  --bg-card: #1e293b;
-  --bg-card-hover: #334155;
-  --text-primary: #f1f5f9;
-  --text-secondary: #94a3b8;
-  --text-muted: #64748b;
-  --border: #334155;
-  --accent: #3b82f6;
-  --green: #22c55e;
-  --red: #ef4444;
-  --yellow: #eab308;
+  --color-bg: #111318;
+  --color-surface: #191c24;
+  --color-surface-hover: #1f2330;
+  --color-border: #262a36;
+  --color-border-hover: #333848;
+  --color-text: #e2e4e9;
+  --color-text-secondary: #8b8fa3;
+  --color-text-muted: #565a6e;
+  --color-accent: #6b9fff;
+  --color-accent-hover: #8bb4ff;
+  --color-green: #4ade80;
+  --color-green-dim: rgba(74, 222, 128, 0.12);
+  --color-red: #f87171;
+  --color-red-dim: rgba(248, 113, 113, 0.12);
+  --color-amber: #fbbf24;
+  --color-amber-dim: rgba(251, 191, 36, 0.12);
+  --color-shadow: rgba(0, 0, 0, 0.3);
+  color-scheme: dark;
+}
+
+/* ── Light theme ── */
+:root[data-theme="light"] {
+  --color-bg: #f8f6f1;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f2efe8;
+  --color-border: #e4dfd6;
+  --color-border-hover: #d4cfc5;
+  --color-text: #2c2a25;
+  --color-text-secondary: #6b6860;
+  --color-text-muted: #9c9890;
+  --color-accent: #3d7bd9;
+  --color-accent-hover: #2b63b8;
+  --color-green: #16a34a;
+  --color-green-dim: rgba(22, 163, 74, 0.1);
+  --color-red: #dc2626;
+  --color-red-dim: rgba(220, 38, 38, 0.08);
+  --color-amber: #d97706;
+  --color-amber-dim: rgba(217, 119, 6, 0.1);
+  --color-shadow: rgba(0, 0, 0, 0.06);
+  color-scheme: light;
+}
+
+@theme {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-border: var(--color-border);
+  --color-text: var(--color-text);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-muted: var(--color-text-muted);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-green: var(--color-green);
+  --color-green-dim: var(--color-green-dim);
+  --color-red: var(--color-red);
+  --color-red-dim: var(--color-red-dim);
+  --color-amber: var(--color-amber);
+  --color-amber-dim: var(--color-amber-dim);
 }
 
 html {
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  transition: background-color 0.3s, color 0.3s;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
 }
 
 /* Scrollbar */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-primary); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+/* Monospace for data */
+.font-data {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.85em;
+  letter-spacing: -0.02em;
+}
+
+/* Subtle card */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 20px;
+  box-shadow: 0 1px 3px var(--color-shadow);
+}
+
+.card-flush {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px var(--color-shadow);
+}
+
+/* Table base */
+.data-table {
+  width: 100%;
+  font-size: 13px;
+}
+.data-table th {
+  text-align: left;
+  padding: 10px 12px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+  user-select: none;
+}
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.data-table tbody tr {
+  transition: background 0.15s;
+}
+.data-table tbody tr:hover {
+  background: var(--color-surface-hover);
+}
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Badge */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+.badge-green { background: var(--color-green-dim); color: var(--color-green); }
+.badge-red { background: var(--color-red-dim); color: var(--color-red); }
+.badge-amber { background: var(--color-amber-dim); color: var(--color-amber); }
+.badge-muted { background: rgba(86, 90, 110, 0.15); color: var(--color-text-muted); }
+
+/* Link */
+a.data-link {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+a.data-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* Pill tag */
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: rgba(107, 159, 255, 0.08);
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: background 0.15s;
+}
+.pill:hover {
+  background: rgba(107, 159, 255, 0.15);
+}
+
+/* Section heading */
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 16px;
+}
+
+/* Theme toggle */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+.theme-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.15s;
+}
+.theme-toggle button:hover {
+  color: var(--color-text);
+  background: var(--color-surface-hover);
+}
+.theme-toggle button.active {
+  color: var(--color-accent);
+  background: rgba(107, 159, 255, 0.1);
+}

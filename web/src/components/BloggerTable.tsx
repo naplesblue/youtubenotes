@@ -8,7 +8,6 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import type { Blogger } from '../lib/types';
-import { toAnalystSlug } from '../lib/analystSlug';
 
 interface Props {
   bloggers: Blogger[];
@@ -22,10 +21,9 @@ export default function BloggerTable({ bloggers }: Props) {
   const columns = useMemo<ColumnDef<Blogger>[]>(() => [
     {
       accessorKey: 'analyst',
-      header: '博主',
+      header: '分析师',
       cell: ({ row }) => (
-        <a href={`/bloggers/${toAnalystSlug(row.original.analyst)}/`}
-           className="text-blue-400 hover:text-blue-300 font-medium">
+        <a href={`/bloggers/${row.original.slug}/`} className="data-link font-medium">
           {row.original.analyst}
         </a>
       ),
@@ -33,33 +31,35 @@ export default function BloggerTable({ bloggers }: Props) {
     {
       accessorKey: 'channel',
       header: '频道',
-      cell: ({ getValue }) => <span className="text-slate-400 text-sm">{getValue() as string}</span>,
+      cell: ({ getValue }) => (
+        <span style={{ color: 'var(--color-text-muted)' }}>{getValue() as string}</span>
+      ),
     },
     {
       accessorKey: 'total_opinions',
       header: '观点数',
-      cell: ({ getValue }) => <span className="font-mono">{getValue() as number}</span>,
+      cell: ({ getValue }) => <span className="font-data">{getValue() as number}</span>,
     },
     {
       id: 'win_rate_30d',
-      header: '30d 胜率',
+      header: '30天胜率',
       accessorFn: (row) => row.win_rate?.['30d'],
       cell: ({ getValue }) => {
         const v = getValue() as number | null;
         return v != null
-          ? <span className="font-mono">{(v * 100).toFixed(0)}%</span>
-          : <span className="text-xs px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">pending</span>;
+          ? <span className="font-data">{(v * 100).toFixed(0)}%</span>
+          : <span className="badge badge-amber">待验证</span>;
       },
     },
     {
       id: 'win_rate_90d',
-      header: '90d 胜率',
+      header: '90天胜率',
       accessorFn: (row) => row.win_rate?.['90d'],
       cell: ({ getValue }) => {
         const v = getValue() as number | null;
         return v != null
-          ? <span className="font-mono">{(v * 100).toFixed(0)}%</span>
-          : <span className="text-xs px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">pending</span>;
+          ? <span className="font-data">{(v * 100).toFixed(0)}%</span>
+          : <span className="badge badge-amber">待验证</span>;
       },
     },
     {
@@ -68,19 +68,18 @@ export default function BloggerTable({ bloggers }: Props) {
       cell: ({ getValue }) => {
         const v = getValue() as number | null;
         return v != null
-          ? <span className="font-mono">{v.toFixed(1)}</span>
-          : <span className="text-slate-500">—</span>;
+          ? <span className="font-data">{v.toFixed(1)}</span>
+          : <span style={{ color: 'var(--color-text-muted)' }}>—</span>;
       },
     },
     {
       id: 'top_tickers',
-      header: '热门 Ticker',
+      header: '热门标的',
       enableSorting: false,
       cell: ({ row }) => (
-        <div className="flex gap-1 flex-wrap">
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
           {row.original.top_tickers.slice(0, 5).map(t => (
-            <a key={t.ticker} href={`/tickers/${t.ticker}/`}
-               className="text-xs px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 hover:bg-slate-600">
+            <a key={t.ticker} href={`/tickers/${t.ticker}/`} className="pill">
               {t.ticker}
             </a>
           ))}
@@ -99,19 +98,17 @@ export default function BloggerTable({ bloggers }: Props) {
   });
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div style={{ overflowX: 'auto' }}>
+      <table className="data-table">
         <thead>
           {table.getHeaderGroups().map(hg => (
-            <tr key={hg.id} className="border-b border-slate-700">
+            <tr key={hg.id}>
               {hg.headers.map(header => (
                 <th key={header.id}
-                    className="text-left py-3 px-3 text-slate-400 font-medium cursor-pointer select-none hover:text-slate-200"
+                    style={{ cursor: header.column.getCanSort() ? 'pointer' : 'default' }}
                     onClick={header.column.getToggleSortingHandler()}>
-                  <div className="flex items-center gap-1">
-                    {flexRender(header.column.columnDef.header, header.getContext())}
-                    {{ asc: ' ↑', desc: ' ↓' }[header.column.getIsSorted() as string] ?? ''}
-                  </div>
+                  {flexRender(header.column.columnDef.header, header.getContext())}
+                  {{ asc: ' ↑', desc: ' ↓' }[header.column.getIsSorted() as string] ?? ''}
                 </th>
               ))}
             </tr>
@@ -119,9 +116,9 @@ export default function BloggerTable({ bloggers }: Props) {
         </thead>
         <tbody>
           {table.getRowModel().rows.map(row => (
-            <tr key={row.id} className="border-b border-slate-800 hover:bg-slate-800/50 transition-colors">
+            <tr key={row.id}>
               {row.getVisibleCells().map(cell => (
-                <td key={cell.id} className="py-3 px-3">
+                <td key={cell.id}>
                   {flexRender(cell.column.columnDef.cell, cell.getContext())}
                 </td>
               ))}

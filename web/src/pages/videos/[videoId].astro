@@ -1,0 +1,398 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import type { DashboardData, Video } from '../../lib/types';
+import { toAnalystSlug } from '../../lib/analystSlug';
+
+import dataRaw from '../../../public/data/dashboard.json';
+const data = dataRaw as unknown as DashboardData;
+
+export function getStaticPaths() {
+  const d = dataRaw as unknown as DashboardData;
+  return d.videos.map(v => ({
+    params: { videoId: v.video_id },
+    props: { video: v },
+  }));
+}
+
+const { video } = Astro.props;
+const v = video as Video;
+
+const relatedOpinions = data.opinions.filter(o =>
+  o.channel === v.channel && o.published_date === v.date
+);
+
+const channelVideos = data.videos
+  .filter(other => other.channel === v.channel && other.video_id !== v.video_id)
+  .sort((a, b) => b.date.localeCompare(a.date))
+  .slice(0, 5);
+
+const bloggerSlug = (() => {
+  const blogger = data.bloggers.find(b => b.channel === v.channel);
+  return blogger?.slug || toAnalystSlug(v.host || v.channel);
+})();
+
+const summaryHtml = v.summary
+  ? v.summary
+    .replace(/^# .+$/gm, '')
+    .replace(/^## (.+)$/gm, '<h3 class="sum-h3">$1</h3>')
+    .replace(/^### (.+)$/gm, '<h4 class="sum-h4">$1</h4>')
+    .replace(/^   \* (.+)$/gm, '<div class="sum-sub">· $1</div>')
+    .replace(/^\* \*\*(.+?)\*\*(.*)$/gm, '<div class="sum-item"><strong>$1</strong>$2</div>')
+    .replace(/^\* (.+)$/gm, '<div class="sum-item">· $1</div>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n{2,}/g, '<div class="sum-gap"></div>')
+  : '';
+---
+<DashboardLayout title={`${v.title} — YTNotes`} current="">
+  <div class="video-page">
+
+    <!-- Breadcrumb -->
+    <div class="breadcrumb">
+      <a href="/" class="data-link">← 概览</a>
+    </div>
+
+    <!-- Header -->
+    <header class="video-header">
+      <h1 class="video-title">{v.title}</h1>
+      <div class="video-meta">
+        <a href={`/bloggers/${bloggerSlug}/`} class="data-link channel-name">
+          {v.channel}
+        </a>
+        {v.host && v.host !== v.channel && (
+          <span class="meta-item">主持: {v.host}</span>
+        )}
+        <span class="font-data meta-item">{v.date}</span>
+      </div>
+      {v.youtube_url && (
+        <a href={v.youtube_url} target="_blank" rel="noopener noreferrer" class="yt-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="flex-shrink:0;">
+            <path d="M23.5 6.2a3 3 0 0 0-2.1-2.1C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.4.6A3 3 0 0 0 .5 6.2 31.4 31.4 0 0 0 0 12a31.4 31.4 0 0 0 .5 5.8 3 3 0 0 0 2.1 2.1c1.9.6 9.4.6 9.4.6s7.5 0 9.4-.6a3 3 0 0 0 2.1-2.1c.4-1.9.5-5.8.5-5.8s0-3.9-.5-5.8zM9.5 15.6V8.4l6.3 3.6-6.3 3.6z"/>
+          </svg>
+          观看视频
+        </a>
+      )}
+    </header>
+
+    <!-- Mentioned Tickers -->
+    {v.mentioned_tickers.length > 0 && (
+      <section class="card vp-card">
+        <div class="section-title">提及标的 ({v.mentioned_tickers.length})</div>
+        <div class="ticker-list">
+          {v.mentioned_tickers.map((t: any) => {
+            const sym = typeof t === 'string' ? t : t.ticker;
+            const name = typeof t === 'string' ? '' : (t.company_name || '');
+            const sentiment = typeof t === 'string' ? '' : (t.sentiment || '');
+            const isBull = sentiment.includes('bullish');
+            const isBear = sentiment.includes('bearish');
+            return (
+              <a href={`/tickers/${sym}/`} class="ticker-chip">
+                {sentiment && (
+                  <span class={`ticker-dot ${isBull ? 'dot-bull' : isBear ? 'dot-bear' : 'dot-neutral'}`} />
+                )}
+                <span class="font-data" style="font-weight:500;">{sym}</span>
+                {name && <span class="ticker-name">{name}</span>}
+              </a>
+            );
+          })}
+        </div>
+      </section>
+    )}
+
+    <!-- Key Points -->
+    {v.key_points.length > 0 && (
+      <section class="card vp-card">
+        <div class="section-title">要点 ({v.key_points.length})</div>
+        <ul class="kp-list">
+          {v.key_points.map(kp => (
+            <li>{kp}</li>
+          ))}
+        </ul>
+      </section>
+    )}
+
+    <!-- Summary -->
+    {v.summary && (
+      <section class="card vp-card">
+        <div class="section-title">内容摘要</div>
+        <div class="summary-content" set:html={summaryHtml} />
+      </section>
+    )}
+
+    <!-- Related Opinions -->
+    {relatedOpinions.length > 0 && (
+      <section class="card vp-card">
+        <div class="section-title">同期观点 ({relatedOpinions.length})</div>
+        <div class="opinion-list">
+          {relatedOpinions.map((o, i) => {
+            const sentCls = o.sentiment.includes('bullish') ? 'badge-green'
+              : o.sentiment.includes('bearish') ? 'badge-red' : 'badge-muted';
+            const sentLabel = o.sentiment.includes('bullish') ? '看多'
+              : o.sentiment.includes('bearish') ? '看空' : '中性';
+            return (
+              <div class={`opinion-row ${i > 0 ? 'opinion-row-border' : ''}`}>
+                <a href={`/tickers/${o.ticker}/`} class="pill">{o.ticker}</a>
+                <span class={`badge ${sentCls}`}>{sentLabel}</span>
+                <span class="opinion-analyst">{o.analyst}</span>
+                {o.prediction.price != null && (
+                  <span class="font-data opinion-price">${o.prediction.price.toFixed(1)}</span>
+                )}
+                {o.prediction.target_price != null && (
+                  <span class="font-data opinion-target">
+                    → ${o.prediction.target_price.toFixed(1)}
+                  </span>
+                )}
+                {o.prediction.context && (
+                  <span class="opinion-context">{o.prediction.context}</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    )}
+
+    <!-- Other videos from this channel -->
+    {channelVideos.length > 0 && (
+      <section class="card vp-card">
+        <div class="section-title">该频道其他视频</div>
+        <div class="channel-videos">
+          {channelVideos.map((other, i) => (
+            <a href={`/videos/${other.video_id}/`}
+               class={`channel-video-link ${i > 0 ? 'channel-video-border' : ''}`}>
+              <span class="font-data cv-date">{other.date.slice(5)}</span>
+              <span class="cv-title">{other.title}</span>
+              <span class="font-data cv-count">{other.mentioned_tickers.length} 标的</span>
+            </a>
+          ))}
+        </div>
+      </section>
+    )}
+
+  </div>
+</DashboardLayout>
+
+<style>
+  .video-page {
+    max-width: 760px;
+  }
+  .breadcrumb {
+    margin-bottom: 20px;
+    font-size: 12px;
+  }
+
+  /* ── Header ── */
+  .video-header {
+    margin-bottom: 32px;
+  }
+  .video-title {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.5;
+    margin-bottom: 12px;
+  }
+  .video-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .channel-name {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .meta-item {
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+  .yt-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-red);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.15s;
+  }
+  .yt-btn:hover {
+    border-color: var(--color-red);
+    background: rgba(248, 113, 113, 0.06);
+  }
+
+  /* ── Cards ── */
+  .vp-card {
+    margin-bottom: 24px;
+    padding: 20px 24px;
+  }
+
+  /* ── Tickers ── */
+  .ticker-list {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .ticker-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.15s;
+    font-size: 12px;
+  }
+  .ticker-chip:hover {
+    border-color: var(--color-accent);
+  }
+  .ticker-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-bull { background: var(--color-green); }
+  .dot-bear { background: var(--color-red); }
+  .dot-neutral { background: var(--color-text-muted); }
+  .ticker-name {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+
+  /* ── Key Points ── */
+  .kp-list {
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .kp-list li {
+    font-size: 13px;
+    color: var(--color-text-secondary);
+    line-height: 1.7;
+  }
+
+  /* ── Summary ── */
+  .summary-content {
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--color-text-secondary);
+  }
+  .sum-h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 20px 0 10px;
+  }
+  .sum-h4 {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--color-text-secondary);
+    margin: 16px 0 8px;
+  }
+  .sum-sub {
+    padding-left: 24px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--color-text-muted);
+    line-height: 1.7;
+  }
+  .sum-item {
+    margin-bottom: 6px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--color-text-secondary);
+  }
+  .sum-item strong,
+  .summary-content strong {
+    font-weight: 500;
+    color: var(--color-text);
+  }
+  .sum-gap {
+    height: 12px;
+  }
+
+  /* ── Opinions ── */
+  .opinion-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .opinion-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    flex-wrap: wrap;
+  }
+  .opinion-row-border {
+    border-top: 1px solid var(--color-border);
+  }
+  .opinion-analyst {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+  }
+  .opinion-price {
+    font-size: 12px;
+  }
+  .opinion-target {
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+  .opinion-context {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    flex-basis: 100%;
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+
+  /* ── Channel Videos ── */
+  .channel-videos {
+    display: flex;
+    flex-direction: column;
+  }
+  .channel-video-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    text-decoration: none;
+    color: inherit;
+    transition: opacity 0.15s;
+  }
+  .channel-video-link:hover {
+    opacity: 0.8;
+  }
+  .channel-video-border {
+    border-top: 1px solid var(--color-border);
+  }
+  .cv-date {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    width: 48px;
+    flex-shrink: 0;
+  }
+  .cv-title {
+    font-size: 13px;
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .cv-count {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    flex-shrink: 0;
+  }
+</style>

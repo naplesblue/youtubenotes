@@ -14,7 +14,7 @@ export default function TickerGrid({ tickers }: Props) {
     if (search) {
       const q = search.toUpperCase();
       list = list.filter(t =>
-        t.ticker.includes(q) || t.company_name.includes(search)
+        t.ticker.includes(q) || t.company_name.toUpperCase().includes(q)
       );
     }
     list.sort((a, b) => {
@@ -24,62 +24,107 @@ export default function TickerGrid({ tickers }: Props) {
     return list;
   }, [tickers, search, sortBy]);
 
+  const btnStyle = (active: boolean) => ({
+    padding: '4px 12px',
+    borderRadius: 4,
+    fontSize: 11,
+    fontWeight: 500,
+    cursor: 'pointer' as const,
+    border: 'none',
+    background: active ? 'rgba(107,159,255,0.12)' : 'transparent',
+    color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
+    transition: 'all 0.15s',
+  });
+
   return (
     <div>
-      <div className="flex gap-3 mb-4 items-center">
+      <div style={{ display: 'flex', gap: 12, marginBottom: 20, alignItems: 'center' }}>
         <input
           type="text"
-          placeholder="搜索 Ticker..."
+          placeholder="搜索标的..."
           value={search}
           onChange={e => setSearch(e.target.value)}
-          className="px-3 py-2 rounded-lg text-sm border border-slate-700 bg-slate-800 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 w-48"
+          style={{
+            padding: '7px 12px',
+            borderRadius: 6,
+            fontSize: 13,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-surface)',
+            color: 'var(--color-text)',
+            outline: 'none',
+            width: 180,
+          }}
         />
-        <div className="flex gap-1 text-xs">
-          <button
-            onClick={() => setSortBy('opinions')}
-            className={`px-3 py-1.5 rounded ${sortBy === 'opinions' ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-400'}`}
-          >观点数</button>
-          <button
-            onClick={() => setSortBy('sentiment')}
-            className={`px-3 py-1.5 rounded ${sortBy === 'sentiment' ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-400'}`}
-          >情绪</button>
+        <div style={{ display: 'flex', gap: 2 }}>
+          <button onClick={() => setSortBy('opinions')} style={btnStyle(sortBy === 'opinions')}>
+            按数量
+          </button>
+          <button onClick={() => setSortBy('sentiment')} style={btnStyle(sortBy === 'sentiment')}>
+            按情绪
+          </button>
         </div>
+        <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
+          {filtered.length} 个标的
+        </span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+        gap: 10,
+      }}>
         {filtered.map(t => {
           const ws = t.consensus.weighted_sentiment;
           const total = t.consensus.bullish_count + t.consensus.bearish_count + t.consensus.neutral_count;
           const bullPct = total > 0 ? (t.consensus.bullish_count / total) * 100 : 0;
           const bearPct = total > 0 ? (t.consensus.bearish_count / total) * 100 : 0;
 
-          const borderColor = ws > 0.3 ? '#22c55e40' : ws < -0.3 ? '#ef444440' : '#33415540';
-          const bgGlow = ws > 0.3 ? 'rgba(34,197,94,0.05)' : ws < -0.3 ? 'rgba(239,68,68,0.05)' : 'transparent';
-
           return (
             <a key={t.ticker} href={`/tickers/${t.ticker}/`}
-               className="rounded-xl p-4 border transition-all hover:scale-[1.02] hover:shadow-lg block"
-               style={{ background: `linear-gradient(135deg, #1e293b, ${bgGlow})`, borderColor }}>
-              <div className="flex items-baseline justify-between mb-2">
-                <span className="font-bold text-lg">{t.ticker}</span>
-                <span className="text-xs text-slate-500">{t.active_opinions} 条</span>
+               style={{
+                 display: 'block',
+                 padding: 16,
+                 borderRadius: 10,
+                 border: '1px solid var(--color-border)',
+                 background: 'var(--color-surface)',
+                 textDecoration: 'none',
+                 color: 'inherit',
+                 transition: 'all 0.2s',
+               }}
+               onMouseEnter={e => {
+                 (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)';
+                 (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)';
+               }}
+               onMouseLeave={e => {
+                 (e.currentTarget as HTMLElement).style.background = 'var(--color-surface)';
+                 (e.currentTarget as HTMLElement).style.transform = 'none';
+               }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span className="font-data" style={{ fontSize: 15, fontWeight: 700 }}>{t.ticker}</span>
+                <span className="font-data" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                  {t.active_opinions}
+                </span>
               </div>
-              <div className="text-xs text-slate-400 mb-3 truncate">{t.company_name}</div>
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {t.company_name}
+              </div>
 
               {/* Sentiment bar */}
-              <div className="h-2 rounded-full bg-slate-700 overflow-hidden flex">
-                {bullPct > 0 && <div className="h-full bg-green-500" style={{ width: `${bullPct}%` }} />}
-                {bearPct > 0 && <div className="h-full bg-red-500" style={{ width: `${bearPct}%` }} />}
+              <div style={{ height: 3, borderRadius: 2, background: 'var(--color-border)', overflow: 'hidden', display: 'flex' }}>
+                {bullPct > 0 && <div style={{ height: '100%', width: `${bullPct}%`, background: 'var(--color-green)', opacity: 0.8 }} />}
+                {bearPct > 0 && <div style={{ height: '100%', width: `${bearPct}%`, background: 'var(--color-red)', opacity: 0.8 }} />}
               </div>
-              <div className="flex justify-between text-xs mt-1">
-                <span className="text-green-400">{t.consensus.bullish_count} 多</span>
-                <span className="text-slate-500">{t.consensus.neutral_count}</span>
-                <span className="text-red-400">{t.consensus.bearish_count} 空</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginTop: 6, color: 'var(--color-text-muted)' }}>
+                <span style={{ color: 'var(--color-green)' }}>{t.consensus.bullish_count}</span>
+                <span>{t.consensus.neutral_count}</span>
+                <span style={{ color: 'var(--color-red)' }}>{t.consensus.bearish_count}</span>
               </div>
 
               {t.consensus.avg_target_price && (
-                <div className="text-xs text-slate-500 mt-2">
-                  目标均价 <span className="text-slate-300">${t.consensus.avg_target_price.toFixed(0)}</span>
+                <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 8 }}>
+                  目标价 <span className="font-data" style={{ color: 'var(--color-text-secondary)' }}>
+                    ${t.consensus.avg_target_price.toFixed(0)}
+                  </span>
                 </div>
               )}
             </a>

@@ -19,79 +19,85 @@ export function getStaticPaths() {
 const { tickerData } = Astro.props;
 const ticker = tickerData as Ticker;
 
-// Get full opinions for this ticker
 const tickerOpinions = data.opinions.filter(o => o.ticker === ticker.ticker);
 
 const ws = ticker.consensus.weighted_sentiment;
-const wsColor = ws > 0.2 ? '#22c55e' : ws < -0.2 ? '#ef4444' : '#64748b';
-const wsLabel = ws > 0.2 ? '偏多' : ws < -0.2 ? '偏空' : '中性';
+const wsColor = ws > 0.2 ? 'var(--color-green)' : ws < -0.2 ? 'var(--color-red)' : 'var(--color-text-muted)';
+const wsLabel = ws > 0.2 ? '看多' : ws < -0.2 ? '看空' : '中性';
 ---
-<DashboardLayout title={`${ticker.ticker} — YTNotes Dashboard`} current="/tickers/">
-  <div class="mb-6">
-    <a href="/tickers/" class="text-sm text-slate-500 hover:text-slate-300">← Ticker 网格</a>
+<DashboardLayout title={`${ticker.ticker} — YTNotes`} current="/tickers/">
+  <div style="margin-bottom:24px;">
+    <a href="/tickers/" class="data-link" style="font-size:12px;color:var(--color-text-muted);">← 标的</a>
   </div>
 
-  <div class="flex items-baseline gap-4 mb-6">
-    <h1 class="text-2xl font-bold">{ticker.ticker}</h1>
-    <span class="text-slate-400">{ticker.company_name}</span>
-    <span class="text-sm px-2 py-0.5 rounded font-medium" style={`background:${wsColor}20;color:${wsColor}`}>
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:24px;flex-wrap:wrap;">
+    <h1 style="font-size:20px;font-weight:600;color:var(--color-text);">{ticker.ticker}</h1>
+    <span style="font-size:13px;color:var(--color-text-muted);">{ticker.company_name}</span>
+    <span style={`font-size:12px;padding:2px 10px;border-radius:4px;font-weight:500;background:color-mix(in srgb, ${wsColor} 12%, transparent);color:${wsColor};`}>
       {wsLabel} ({ws >= 0 ? '+' : ''}{ws.toFixed(2)})
     </span>
   </div>
 
   <!-- Stats -->
-  <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-xs text-slate-400">看多</div>
-      <div class="text-xl font-bold text-green-400">{ticker.consensus.bullish_count}</div>
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px;" class="stats-grid-5">
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">看多</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-green);">{ticker.consensus.bullish_count}</div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-xs text-slate-400">看空</div>
-      <div class="text-xl font-bold text-red-400">{ticker.consensus.bearish_count}</div>
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">看空</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-red);">{ticker.consensus.bearish_count}</div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-xs text-slate-400">中性</div>
-      <div class="text-xl font-bold text-slate-400">{ticker.consensus.neutral_count}</div>
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">中性</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-text-muted);">{ticker.consensus.neutral_count}</div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-xs text-slate-400">目标均价</div>
-      <div class="text-xl font-bold text-blue-400">
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">均价目标</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-accent);">
         {ticker.consensus.avg_target_price ? `$${ticker.consensus.avg_target_price.toFixed(0)}` : '—'}
       </div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-xs text-slate-400">支撑均价</div>
-      <div class="text-xl font-bold text-amber-400">
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">均价支撑</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-amber);">
         {ticker.consensus.avg_support_price ? `$${ticker.consensus.avg_support_price.toFixed(0)}` : '—'}
       </div>
     </div>
   </div>
 
   <!-- Price Chart -->
-  <div class="rounded-xl border border-slate-700/50 p-5 mb-6" style="background:#1e293b;">
-    <h2 class="text-lg font-semibold mb-3">价格走势 + 观点标记</h2>
-    <div class="flex gap-4 text-xs text-slate-500 mb-2">
-      <span><span class="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>看多</span>
-      <span><span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1"></span>看空</span>
-      <span><span class="inline-block w-2 h-2 rounded-full bg-slate-500 mr-1"></span>中性</span>
+  <div class="card" style="margin-bottom:24px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+      <div class="section-title" style="margin-bottom:0;">价格 + 观点</div>
+      <div style="display:flex;gap:12px;font-size:11px;color:var(--color-text-muted);">
+        <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--color-green);margin-right:4px;"></span>看多</span>
+        <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--color-red);margin-right:4px;"></span>看空</span>
+        <span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--color-text-muted);margin-right:4px;"></span>中性</span>
+      </div>
     </div>
     <PriceChart client:load ticker={ticker} />
   </div>
 
   <!-- Analysts -->
   {ticker.top_analysts.length > 0 && (
-    <div class="rounded-xl border border-slate-700/50 p-5 mb-6" style="background:#1e293b;">
-      <h2 class="text-lg font-semibold mb-3">分析师共识</h2>
-      <div class="flex gap-3 flex-wrap">
+    <div class="card" style="margin-bottom:24px;">
+      <div class="section-title">分析师共识</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
         {ticker.top_analysts.map(a => {
-          const cls = a.sentiment.includes('bullish') ? 'border-green-500/30 bg-green-500/5'
-            : a.sentiment.includes('bearish') ? 'border-red-500/30 bg-red-500/5'
-            : 'border-slate-700 bg-slate-800/50';
+          const sentColor = a.sentiment.includes('bullish') ? 'var(--color-green)'
+            : a.sentiment.includes('bearish') ? 'var(--color-red)' : 'var(--color-text-muted)';
           return (
-            <a href={`/bloggers/${toAnalystSlug(a.analyst)}/`}
-               class={`rounded-lg border px-4 py-2 hover:scale-105 transition-transform ${cls}`}>
-              <div class="font-medium text-sm">{a.analyst}</div>
-              <div class="text-xs text-slate-400">{a.channel}</div>
+            <a href={`/bloggers/${a.blogger_slug || toAnalystSlug(a.analyst)}/`}
+               style={`display:block;padding:10px 16px;border-radius:8px;border:1px solid var(--color-border);background:var(--color-surface);text-decoration:none;color:inherit;transition:all 0.15s;`}
+               onmouseenter="this.style.borderColor='var(--color-border-hover)';this.style.transform='translateY(-1px)'"
+               onmouseleave="this.style.borderColor='var(--color-border)';this.style.transform='none'">
+              <div style="font-size:13px;font-weight:500;color:var(--color-text);">{a.analyst}</div>
+              <div style="font-size:11px;color:var(--color-text-muted);margin-top:2px;">{a.channel}</div>
+              <div style={`font-size:11px;margin-top:4px;color:${sentColor};`}>
+                {a.sentiment.includes('bullish') ? '看多' : a.sentiment.includes('bearish') ? '看空' : '中性'}
+                {a.count > 1 ? ` ×${a.count}` : ''}
+              </div>
             </a>
           );
         })}
@@ -100,8 +106,19 @@ const wsLabel = ws > 0.2 ? '偏多' : ws < -0.2 ? '偏空' : '中性';
   )}
 
   <!-- Opinions Table -->
-  <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
-    <h2 class="text-lg font-semibold mb-3">全部观点 ({tickerOpinions.length})</h2>
-    <OpinionTable client:load opinions={tickerOpinions} showChannel={true} />
+  <div class="card-flush" style="padding:0;">
+    <div style="padding:16px 20px;">
+      <div class="section-title">全部观点 ({tickerOpinions.length})</div>
+      <OpinionTable client:load opinions={tickerOpinions} showChannel={true} />
+    </div>
   </div>
 </DashboardLayout>
+
+<style>
+  @media (max-width: 768px) {
+    .stats-grid-5 { grid-template-columns: repeat(2, 1fr) !important; }
+  }
+  @media (min-width: 769px) and (max-width: 1024px) {
+    .stats-grid-5 { grid-template-columns: repeat(3, 1fr) !important; }
+  }
+</style>

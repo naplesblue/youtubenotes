@@ -60,6 +60,7 @@ export interface Opinion {
   video_id: string;
   channel: string;
   analyst: string;
+  blogger_slug?: string;
   published_date: string;
   ticker: string;
   company_name: string;
@@ -70,6 +71,8 @@ export interface Opinion {
 }
 
 export interface Blogger {
+  slug: string;
+  alias_slugs?: string[];
   channel: string;
   analyst: string;
   total_opinions: number;
@@ -96,11 +99,20 @@ export interface Ticker {
     avg_target_price: number | null;
     avg_support_price: number | null;
   };
-  top_analysts: { analyst: string; channel: string; sentiment: string; win_rate_90d: number | null }[];
+  top_analysts: {
+    analyst: string;
+    channel: string;
+    blogger_slug?: string;
+    sentiment: string;
+    win_rate_90d: number | null;
+  }[];
   price_data: { date: string; open: number; high: number; low: number; close: number }[];
   opinion_markers: {
+    opinion_id?: string;
+    video_id?: string;
     date: string;
     analyst: string;
+    blogger_slug?: string;
     sentiment: string;
     type: string;
     direction: string;
@@ -120,6 +132,7 @@ export interface Video {
   youtube_url: string;
   mentioned_tickers: string[];
   key_points: string[];
+  summary: string;
 }
 
 export interface ActivityEvent {
@@ -128,8 +141,9 @@ export interface ActivityEvent {
   channel: string;
   title?: string;
   video_id?: string;
-  tickers?: string[];
+  tickers?: (string | { ticker: string; company_name?: string; sentiment?: string; analyst?: string; price_levels?: any[] })[];
   analyst?: string;
+  blogger_slug?: string;
   ticker?: string;
   sentiment?: string;
   prediction_type?: string;

@@ -10,70 +10,84 @@ const data = dataRaw as unknown as DashboardData;
 
 export function getStaticPaths() {
   const d = dataRaw as unknown as DashboardData;
-  return d.bloggers.map(b => ({
-    params: { analyst: toAnalystSlug(b.analyst) },
-    props: { blogger: b },
-  }));
+  const seen = new Set<string>();
+  const paths: { params: { analyst: string }; props: { blogger: any } }[] = [];
+  for (const b of d.bloggers) {
+    const aliases = new Set<string>([
+      b.slug,
+      toAnalystSlug(b.analyst),
+      ...(b.alias_slugs || []),
+    ]);
+    for (const slug of aliases) {
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+      paths.push({
+        params: { analyst: slug },
+        props: { blogger: b },
+      });
+    }
+  }
+  return paths;
 }
 
 const { blogger } = Astro.props;
 const analystName = blogger.analyst;
 ---
-<DashboardLayout title={`${analystName} — YTNotes Dashboard`} current="/bloggers/">
-  <div class="mb-6">
-    <a href="/bloggers/" class="text-sm text-slate-500 hover:text-slate-300">← 博主排行</a>
+<DashboardLayout title={`${analystName} — YTNotes`} current="/bloggers/">
+  <div style="margin-bottom:24px;">
+    <a href="/bloggers/" class="data-link" style="font-size:12px;color:var(--color-text-muted);">← 分析师</a>
   </div>
 
-  <div class="flex items-baseline gap-4 mb-6">
-    <h1 class="text-2xl font-bold">{analystName}</h1>
-    <span class="text-slate-400">{blogger.channel}</span>
+  <div style="display:flex;align-items:baseline;gap:16px;margin-bottom:24px;">
+    <h1 style="font-size:20px;font-weight:600;color:var(--color-text);">{analystName}</h1>
+    <span style="font-size:13px;color:var(--color-text-muted);">{blogger.channel}</span>
   </div>
 
   <!-- Stats row -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-sm text-slate-400">观点总数</div>
-      <div class="text-2xl font-bold text-blue-400">{blogger.total_opinions}</div>
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px;" class="stats-grid-4">
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">观点数</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-accent);">{blogger.total_opinions}</div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-sm text-slate-400">已验证</div>
-      <div class="text-2xl font-bold text-amber-400">{blogger.verified_opinions}</div>
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">已验证</div>
+      <div class="font-data" style="font-size:22px;font-weight:700;color:var(--color-amber);">{blogger.verified_opinions}</div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-sm text-slate-400">90d 胜率</div>
-      <div class="text-2xl font-bold" style={`color:${blogger.win_rate?.['90d'] != null ? '#22c55e' : '#64748b'}`}>
-        {blogger.win_rate?.['90d'] != null ? `${(blogger.win_rate['90d']! * 100).toFixed(0)}%` : 'pending'}
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">90天胜率</div>
+      <div class="font-data" style={`font-size:22px;font-weight:700;color:${blogger.win_rate?.['90d'] != null ? 'var(--color-green)' : 'var(--color-text-muted)'}`}>
+        {blogger.win_rate?.['90d'] != null ? `${(blogger.win_rate['90d']! * 100).toFixed(0)}%` : '待验证'}
       </div>
     </div>
-    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
-      <div class="text-sm text-slate-400">信誉分</div>
-      <div class="text-2xl font-bold" style={`color:${blogger.credibility_score != null ? '#f59e0b' : '#64748b'}`}>
+    <div class="card" style="padding:16px;">
+      <div style="font-size:11px;color:var(--color-text-muted);margin-bottom:4px;">信誉分</div>
+      <div class="font-data" style={`font-size:22px;font-weight:700;color:${blogger.credibility_score != null ? 'var(--color-amber)' : 'var(--color-text-muted)'}`}>
         {blogger.credibility_score != null ? blogger.credibility_score.toFixed(1) : '—'}
       </div>
     </div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+  <div style="display:grid;grid-template-columns:1fr 2fr;gap:16px;margin-bottom:24px;" class="detail-grid">
     <!-- Sentiment distribution -->
-    <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
-      <h2 class="text-lg font-semibold mb-3">情绪分布</h2>
+    <div class="card">
+      <div class="section-title">情绪分布</div>
       <SentimentChart client:load distribution={blogger.sentiment_distribution} />
     </div>
 
     <!-- Top tickers -->
-    <div class="lg:col-span-2 rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
-      <h2 class="text-lg font-semibold mb-3">热门 Ticker</h2>
-      <div class="space-y-2">
+    <div class="card">
+      <div class="section-title">热门标的</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
         {blogger.top_tickers.map(t => {
           const maxCount = blogger.top_tickers[0]?.count || 1;
           const pct = (t.count / maxCount) * 100;
           return (
-            <a href={`/tickers/${t.ticker}/`} class="flex items-center gap-3 group">
-              <span class="text-sm font-mono w-14 group-hover:text-blue-400 transition-colors">{t.ticker}</span>
-              <div class="flex-1 h-4 rounded bg-slate-800 overflow-hidden">
-                <div class="h-full rounded bg-blue-500/60" style={`width:${pct}%`} />
+            <a href={`/tickers/${t.ticker}/`} class="data-link" style="display:flex;align-items:center;gap:12px;text-decoration:none;">
+              <span class="font-data" style="font-size:13px;width:56px;">{t.ticker}</span>
+              <div style="flex:1;height:6px;border-radius:3px;background:var(--color-border);overflow:hidden;">
+                <div style={`height:100%;border-radius:3px;background:var(--color-accent);opacity:0.6;width:${pct}%;transition:width 0.3s;`} />
               </div>
-              <span class="text-xs text-slate-400 w-6 text-right">{t.count}</span>
+              <span class="font-data" style="font-size:11px;color:var(--color-text-muted);width:24px;text-align:right;">{t.count}</span>
             </a>
           );
         })}
@@ -82,8 +96,17 @@ const analystName = blogger.analyst;
   </div>
 
   <!-- Opinions table -->
-  <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
-    <h2 class="text-lg font-semibold mb-3">全部观点</h2>
-    <OpinionTable client:load opinions={blogger.opinions} />
+  <div class="card-flush" style="padding:0;">
+    <div style="padding:16px 20px;">
+      <div class="section-title">全部观点</div>
+      <OpinionTable client:load opinions={blogger.opinions} />
+    </div>
   </div>
 </DashboardLayout>
+
+<style>
+  @media (max-width: 768px) {
+    .stats-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+    .detail-grid { grid-template-columns: 1fr !important; }
+  }
+</style>

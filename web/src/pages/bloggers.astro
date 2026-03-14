@@ -6,9 +6,16 @@ import type { DashboardData } from '../lib/types';
 import dataRaw from '../../public/data/dashboard.json';
 const data = dataRaw as unknown as DashboardData;
 ---
-<DashboardLayout title="博主排行 — YTNotes Dashboard" current="/bloggers/">
-  <h1 class="text-2xl font-bold mb-6">博主排行</h1>
-  <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
-    <BloggerTable client:load bloggers={data.bloggers} />
+<DashboardLayout title="分析师 — YTNotes" current="/bloggers/">
+  <div class="mb-8">
+    <h1 style="font-size:20px;font-weight:600;margin-bottom:4px;color:var(--color-text);">分析师</h1>
+    <p style="font-size:13px;color:var(--color-text-muted);">
+      追踪 {data.stats.total_channels} 个频道的 {data.bloggers.length} 位分析师
+    </p>
+  </div>
+  <div class="card-flush" style="padding:0;">
+    <div style="padding:16px 20px;">
+      <BloggerTable client:load bloggers={data.bloggers} />
+    </div>
   </div>
 </DashboardLayout>

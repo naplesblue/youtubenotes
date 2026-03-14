@@ -5,10 +5,10 @@ interface Props {
   sub?: string;
   color?: string;
 }
-const { label, value, sub, color = '#3b82f6' } = Astro.props;
+const { label, value, sub, color } = Astro.props;
 ---
-<div class="rounded-xl p-5 border border-slate-700/50" style="background:#1e293b;">
-  <div class="text-sm text-slate-400 mb-1">{label}</div>
-  <div class="text-3xl font-bold" style={`color:${color}`}>{value}</div>
-  {sub && <div class="text-xs text-slate-500 mt-1">{sub}</div>}
+<div class="card">
+  <div class="text-[11px] uppercase tracking-wider mb-2" style="color:var(--color-text-muted);">{label}</div>
+  <div class="font-data text-2xl font-bold" style={color ? `color:${color}` : 'color:var(--color-text)'}>{value}</div>
+  {sub && <div class="text-[11px] mt-1.5" style="color:var(--color-text-muted);">{sub}</div>}
 </div>

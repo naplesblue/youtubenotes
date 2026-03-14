@@ -9,6 +9,9 @@ download_history、video results，输出单个 dashboard.json 供 Astro 前端�
 import json
 import os
 import sys
+import re
+import hashlib
+import yaml
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -44,6 +47,10 @@ OUTPUT_DIR = PROJECT_DIR / "web" / "public" / "data"
 OUTPUT_PATH = OUTPUT_DIR / "dashboard.json"
 
 NON_VERIFIABLE_TYPES = {"reference_only", "stop_loss"}
+PREDICTION_TYPES = {
+    "target_price", "entry_zone", "support", "resistance",
+    "direction_call", "reference_only", "stop_loss",
+}
 GENERIC_ANALYST_NAMES = {"", "unknown", "发言人", "主播", "host", "analyst"}
 ANALYST_ALIASES_BY_CHANNEL = {
     "视野环球财经": {
@@ -54,6 +61,23 @@ ANALYST_ALIASES_BY_CHANNEL = {
         "犀牛": "犀牛 Rihno",
     }
 }
+
+_ANALYST_SLUG_RE = re.compile(r"[^a-z0-9\u4e00-\u9fff]+")
+
+
+def _to_analyst_slug(name: str) -> str:
+    text = str(name or "").strip().lower().replace("/", " ")
+    text = _ANALYST_SLUG_RE.sub("-", text)
+    text = re.sub(r"-{2,}", "-", text).strip("-")
+    return text or "unknown"
+
+
+def _to_blogger_slug(channel: str) -> str:
+    ch = str(channel or "").strip()
+    if not ch:
+        return "channel-unknown"
+    digest = hashlib.md5(ch.encode("utf-8")).hexdigest()[:12]
+    return f"channel-{digest}"
 
 
 def load_json(path: Path):
@@ -100,11 +124,105 @@ def load_download_history() -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _load_config() -> dict:
+    """加载 config.yaml 获取 vault 路径。"""
+    config_path = PROJECT_DIR / "config.yaml"
+    if not config_path.exists():
+        return {}
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _parse_obsidian_note(md_path: Path) -> dict | None:
+    """解析 Obsidian 视频笔记，提取 front matter + 核心观点 + 关键要点。"""
+    text = md_path.read_text(encoding="utf-8")
+
+    # 解析 YAML front matter
+    if not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    if end < 0:
+        return None
+    try:
+        fm = yaml.safe_load(text[3:end])
+    except Exception:
+        return None
+    if not isinstance(fm, dict) or not fm.get("id"):
+        return None
+
+    body = text[end + 4:]
+
+    # 提取 ## 📝 核心观点 section
+    summary = ""
+    m = re.search(r"## 📝 核心观点\s*\n(.*?)(?=\n## )", body, re.DOTALL)
+    if m:
+        summary = m.group(1).strip()
+
+    # 提取 ## 🔑 关键要点 section
+    key_points = []
+    m = re.search(r"## 🔑 关键要点\s*\n(.*?)(?=\n## )", body, re.DOTALL)
+    if m:
+        for line in m.group(1).strip().splitlines():
+            line = line.strip()
+            # 匹配 "1. xxx" 格式
+            pt = re.sub(r"^\d+\.\s*", "", line)
+            if pt:
+                key_points.append(pt)
+
+    source = fm.get("source", {}) or {}
+    mentioned = fm.get("mentioned_tickers", []) or []
+    # 转换 mentioned_tickers 格式
+    tickers_out = []
+    for t in mentioned:
+        if isinstance(t, dict):
+            tickers_out.append({
+                "ticker": t.get("ticker", ""),
+                "company_name": t.get("company", ""),
+                "sentiment": t.get("sentiment", ""),
+                "analyst": t.get("analyst", ""),
+            })
+        elif isinstance(t, str):
+            tickers_out.append(t)
+
+    return {
+        "video_id": fm.get("id", ""),
+        "title": fm.get("title", ""),
+        "channel": source.get("channel", ""),
+        "host": "",  # Obsidian 笔记不单独存 host
+        "date": source.get("published", ""),
+        "youtube_url": source.get("url", ""),
+        "mentioned_tickers": tickers_out,
+        "key_points": key_points,
+        "summary": summary[:3000],
+    }
+
+
 def load_video_results() -> list[dict]:
-    """扫描 data/results/ 下所有 video JSON，提取 metadata + mentioned_tickers."""
+    """优先从 Obsidian 笔记加载视频数据，data/results/ 作为 fallback。"""
     videos = []
+    seen_ids = set()
+
+    # ── 1. 从 Obsidian vault 加载 ──
+    config = _load_config()
+    vault_path = os.environ.get("OBSIDIAN_VAULT_DIR") or (config.get("paths", {}).get("vault", ""))
+    video_folder = config.get("paths", {}).get("folders", {}).get("videos", "YoutubeNotes/02-视频笔记")
+
+    if vault_path:
+        notes_dir = Path(vault_path) / video_folder
+        if notes_dir.exists():
+            count = 0
+            for md_file in notes_dir.rglob("*.md"):
+                parsed = _parse_obsidian_note(md_file)
+                if parsed and parsed["video_id"]:
+                    videos.append(parsed)
+                    seen_ids.add(parsed["video_id"])
+                    count += 1
+            print(f"  → Obsidian 笔记: {count} 个视频")
+
+    # ── 2. Fallback: data/results/ 补充未在 Obsidian 中的视频 ──
     if not RESULTS_DIR.exists():
         return videos
+    fallback_count = 0
     for channel_dir in RESULTS_DIR.iterdir():
         if not channel_dir.is_dir():
             continue
@@ -112,26 +230,33 @@ def load_video_results() -> list[dict]:
             if not date_dir.is_dir():
                 continue
             for json_file in date_dir.glob("*.json"):
-                # 跳过 price_levels 文件
                 if json_file.name.endswith("_price_levels.json"):
                     continue
-                # 跳过 .md 文件（不应被 glob 捕获，但以防万一）
                 if json_file.suffix != ".json":
                     continue
                 data = load_json(json_file)
                 if not data or "metadata" not in data:
                     continue
                 meta = data["metadata"]
+                vid = meta.get("video_id", json_file.stem)
+                if vid in seen_ids:
+                    continue
+                summary_raw = data.get("summary", "") or ""
                 videos.append({
-                    "video_id": meta.get("video_id", json_file.stem),
+                    "video_id": vid,
                     "title": meta.get("title", ""),
                     "channel": meta.get("channel", channel_dir.name),
                     "host": meta.get("host", ""),
                     "date": meta.get("date", date_dir.name),
                     "youtube_url": meta.get("youtube_url", ""),
                     "mentioned_tickers": data.get("mentioned_tickers", []),
-                    "key_points": data.get("key_points", [])[:3],
+                    "key_points": data.get("key_points", []),
+                    "summary": summary_raw[:3000],
                 })
+                seen_ids.add(vid)
+                fallback_count += 1
+    if fallback_count:
+        print(f"  → data/results fallback: {fallback_count} 个视频")
     return videos
 
 
@@ -269,15 +394,34 @@ def _filtered_price_means(tk_opinions: list[dict], latest_close: float | None) -
     return avg_target, avg_support
 
 
+def _normalize_prediction_type_for_dashboard(pred_type, has_price: bool) -> str:
+    normalized = str(pred_type or "").strip().lower()
+    alias = {
+        "target": "target_price",
+        "tp": "target_price",
+        "entry": "entry_zone",
+        "buy_zone": "entry_zone",
+        "pressure": "resistance",
+        "stop": "stop_loss",
+        "stoploss": "stop_loss",
+    }
+    mapped = alias.get(normalized, normalized)
+    if mapped in PREDICTION_TYPES:
+        return mapped
+    return "reference_only" if has_price else "direction_call"
+
+
 def _normalize_opinions_analyst(opinions: list[dict], channel_analyst_map: dict[str, str]) -> list[dict]:
     normalized = []
     for o in opinions:
         item = dict(o)
+        channel = item.get("channel", "")
         item["analyst"] = _normalize_analyst_name(
-            channel=item.get("channel", ""),
+            channel=channel,
             analyst=item.get("analyst", ""),
             channel_analyst_map=channel_analyst_map,
         )
+        item["blogger_slug"] = _to_blogger_slug(channel)
         normalized.append(item)
     return normalized
 
@@ -458,7 +602,7 @@ def build_data_quality(opinions, videos, consensus):
     return issues
 
 
-def build_bloggers(profiles, opinions):
+def build_bloggers(profiles, opinions, channel_analyst_map):
     """构建博主详情数据。"""
     opinions_by_channel = defaultdict(list)
     for o in opinions:
@@ -470,6 +614,12 @@ def build_bloggers(profiles, opinions):
     for p in profiles:
         channel = p.get("channel", "")
         ch_opinions = opinions_by_channel.get(channel, [])
+        canonical_analyst = _normalize_analyst_name(
+            channel=channel,
+            analyst=p.get("analyst", ""),
+            channel_analyst_map=channel_analyst_map,
+        )
+        blogger_slug = _to_blogger_slug(channel)
 
         # 按 ticker 分组统计
         ticker_counts = defaultdict(int)
@@ -490,9 +640,21 @@ def build_bloggers(profiles, opinions):
             if d:
                 daily_counts[d] += 1
 
+        alias_slugs = set()
+        if p.get("analyst"):
+            alias_slugs.add(_to_analyst_slug(p.get("analyst")))
+        if canonical_analyst:
+            alias_slugs.add(_to_analyst_slug(canonical_analyst))
+        for o in ch_opinions:
+            an = o.get("analyst")
+            if an:
+                alias_slugs.add(_to_analyst_slug(an))
+
         bloggers.append({
+            "slug": blogger_slug,
+            "alias_slugs": sorted(s for s in alias_slugs if s),
             "channel": channel,
-            "analyst": p.get("analyst", ""),
+            "analyst": canonical_analyst or p.get("analyst", ""),
             "total_opinions": p.get("total_opinions", 0),
             "verified_opinions": p.get("verified_opinions", 0),
             "win_rate": p.get("win_rate", {}),
@@ -507,6 +669,9 @@ def build_bloggers(profiles, opinions):
                 "ticker": o.get("ticker"),
                 "company_name": o.get("company_name"),
                 "sentiment": o.get("sentiment"),
+                "analyst": o.get("analyst"),
+                "channel": o.get("channel"),
+                "blogger_slug": o.get("blogger_slug") or blogger_slug,
                 "published_date": o.get("published_date"),
                 "prediction": o.get("prediction", {}),
                 "price_at_publish": o.get("price_at_publish"),
@@ -555,15 +720,24 @@ def build_tickers(consensus, opinions, market_cache, channel_analyst_map):
         # 观点标记点（供叠加图用）
         opinion_markers = []
         for o in tk_opinions:
+            pred = o.get("prediction", {}) or {}
+            price = pred.get("price")
+            pred_type = _normalize_prediction_type_for_dashboard(
+                pred.get("type"),
+                has_price=_safe_float(price) is not None,
+            )
             opinion_markers.append({
+                "opinion_id": o.get("opinion_id"),
+                "video_id": o.get("video_id"),
                 "date": o.get("published_date"),
                 "analyst": o.get("analyst"),
+                "blogger_slug": o.get("blogger_slug") or _to_blogger_slug(o.get("channel", "")),
                 "sentiment": o.get("sentiment"),
-                "type": o.get("prediction", {}).get("type"),
-                "direction": o.get("prediction", {}).get("direction"),
-                "price": o.get("prediction", {}).get("price"),
-                "target_price": o.get("prediction", {}).get("target_price"),
-                "confidence": o.get("prediction", {}).get("confidence"),
+                "type": pred_type,
+                "direction": pred.get("direction"),
+                "price": pred.get("price"),
+                "target_price": pred.get("target_price"),
+                "confidence": pred.get("confidence"),
                 "price_at_publish": o.get("price_at_publish"),
             })
 
@@ -586,6 +760,7 @@ def build_tickers(consensus, opinions, market_cache, channel_analyst_map):
             seen_analysts.add(key)
             item = dict(a)
             item["analyst"] = normalized_analyst
+            item["blogger_slug"] = _to_blogger_slug(channel)
             top_analysts.append(item)
 
         tickers.append({
@@ -607,19 +782,25 @@ def build_compact_opinions(opinions):
     for o in opinions:
         pred = o.get("prediction", {})
         context = pred.get("context", "") or ""
+        pred_price = pred.get("price")
+        pred_type = _normalize_prediction_type_for_dashboard(
+            pred.get("type"),
+            has_price=_safe_float(pred_price) is not None,
+        )
         result.append({
             "opinion_id": o.get("opinion_id"),
             "video_id": o.get("video_id"),
             "channel": o.get("channel"),
             "analyst": o.get("analyst"),
+            "blogger_slug": o.get("blogger_slug") or _to_blogger_slug(o.get("channel", "")),
             "published_date": o.get("published_date"),
             "ticker": o.get("ticker"),
             "company_name": o.get("company_name"),
             "sentiment": o.get("sentiment"),
             "prediction": {
-                "type": pred.get("type"),
+                "type": pred_type,
                 "direction": pred.get("direction"),
-                "price": pred.get("price"),
+                "price": pred_price,
                 "target_price": pred.get("target_price"),
                 "stop_loss": pred.get("stop_loss"),
                 "confidence": pred.get("confidence"),
@@ -653,6 +834,7 @@ def build_activity(opinions, videos, limit=30):
             "date": o.get("published_date", ""),
             "channel": o.get("channel", ""),
             "analyst": o.get("analyst", ""),
+            "blogger_slug": o.get("blogger_slug") or _to_blogger_slug(o.get("channel", "")),
             "ticker": o.get("ticker", ""),
             "sentiment": o.get("sentiment", ""),
             "prediction_type": o.get("prediction", {}).get("type", ""),
@@ -701,7 +883,7 @@ def main():
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "stats": build_stats(opinions_normalized, videos, profiles, consensus, download_history),
         "data_quality": build_data_quality(opinions_normalized, videos, consensus),
-        "bloggers": build_bloggers(profiles, opinions_normalized),
+        "bloggers": build_bloggers(profiles, opinions_normalized, channel_analyst_map),
         "tickers": build_tickers(consensus, opinions_normalized, market_cache, channel_analyst_map),
         "opinions": build_compact_opinions(opinions_normalized),
         "videos": videos,
