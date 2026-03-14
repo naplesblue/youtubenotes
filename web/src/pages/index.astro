@@ -74,10 +74,11 @@ const dateRangeLabel = stats.date_range.start && stats.date_range.end
   <!-- Ticker Tape -->
   <div class="card-flush mb-8">
     <div class="px-5 pt-4 pb-1">
-      <div class="section-title">Ticker 快览</div>
+      <div class="section-title">个股热点</div>
     </div>
     <div class="px-4 pb-4">
-      <div class="ticker-tape">
+      <div class="hot-strip-tip">悬停自动滚动 · 滚轮可横向移动</div>
+      <div id="hot-strip-viewport" class="ticker-tape hot-strip-viewport">
       {tickerTape.map(t => {
         const deltaColor = t.delta7d == null ? 'var(--color-text-muted)'
           : t.delta7d >= 0 ? 'var(--color-green)' : 'var(--color-red)';
@@ -165,6 +166,21 @@ const dateRangeLabel = stats.date_range.start && stats.date_range.end
     -ms-overflow-style: none;
   }
   .ticker-tape::-webkit-scrollbar { display: none; }
+  .hot-strip-viewport {
+    cursor: grab;
+    user-select: none;
+    scroll-behavior: auto;
+    border-radius: 8px;
+    padding: 4px 2px;
+  }
+  .hot-strip-viewport.dragging {
+    cursor: grabbing;
+  }
+  .hot-strip-tip {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    margin: 0 0 8px 2px;
+  }
 
   .tape-chip {
     display: flex;
@@ -229,3 +245,72 @@ const dateRangeLabel = stats.date_range.start && stats.date_range.end
     color: var(--color-text-muted);
   }
 </style>
+
+<script is:inline>
+  (() => {
+    const viewport = document.getElementById('hot-strip-viewport');
+    if (!viewport) return;
+
+    let hover = false;
+    let dir = 1;
+    let raf = 0;
+    const speed = 0.38;
+
+    const animate = () => {
+      if (hover) {
+        const max = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+        if (max > 0) {
+          const next = viewport.scrollLeft + speed * dir;
+          if (next <= 0) {
+            viewport.scrollLeft = 0;
+            dir = 1;
+          } else if (next >= max) {
+            viewport.scrollLeft = max;
+            dir = -1;
+          } else {
+            viewport.scrollLeft = next;
+          }
+        }
+      }
+      raf = window.requestAnimationFrame(animate);
+    };
+    raf = window.requestAnimationFrame(animate);
+
+    viewport.addEventListener('mouseenter', () => { hover = true; });
+    viewport.addEventListener('mouseleave', () => { hover = false; });
+
+    viewport.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+        e.preventDefault();
+        viewport.scrollLeft += e.deltaY;
+      }
+    }, { passive: false });
+
+    let isDown = false;
+    let startX = 0;
+    let startLeft = 0;
+
+    viewport.addEventListener('mousedown', (e) => {
+      isDown = true;
+      startX = e.pageX;
+      startLeft = viewport.scrollLeft;
+      viewport.classList.add('dragging');
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDown = false;
+      viewport.classList.remove('dragging');
+    });
+
+    viewport.addEventListener('mousemove', (e) => {
+      if (!isDown) return;
+      e.preventDefault();
+      const dx = e.pageX - startX;
+      viewport.scrollLeft = startLeft - dx;
+    });
+
+    window.addEventListener('beforeunload', () => {
+      if (raf) window.cancelAnimationFrame(raf);
+    });
+  })();
+</script>
