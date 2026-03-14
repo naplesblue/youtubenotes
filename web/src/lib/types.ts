@@ -147,4 +147,6 @@ export interface ActivityEvent {
   ticker?: string;
   sentiment?: string;
   prediction_type?: string;
+  prediction_price?: number | null;
+  target_price?: number | null;
 }

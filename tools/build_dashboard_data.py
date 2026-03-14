@@ -819,17 +819,40 @@ def build_activity(opinions, videos, limit=30):
     events = []
 
     for v in videos:
+        channel = v.get("channel", "")
         events.append({
             "type": "video",
             "date": v.get("date", ""),
-            "channel": v.get("channel", ""),
+            "channel": channel,
             "title": v.get("title", ""),
             "video_id": v.get("video_id", ""),
             "tickers": v.get("mentioned_tickers", []),
+            "blogger_slug": _to_blogger_slug(channel),
         })
 
+    # 对同一日同一频道/分析师/标的的多条观点做聚合去重，避免活动流出现 support/resistance/target 三连
+    type_priority = {
+        "target_price": 100,
+        "entry_zone": 90,
+        "direction_call": 80,
+        "breakout": 70,
+        "support": 60,
+        "resistance": 50,
+        "reference_only": 20,
+        "stop_loss": 10,
+    }
+    dedup_map = {}
     for o in opinions:
-        events.append({
+        pred = o.get("prediction", {}) or {}
+        pred_type = pred.get("type", "") or ""
+        key = (
+            o.get("published_date", ""),
+            o.get("channel", ""),
+            o.get("analyst", ""),
+            o.get("ticker", ""),
+            o.get("sentiment", ""),
+        )
+        candidate = {
             "type": "opinion",
             "date": o.get("published_date", ""),
             "channel": o.get("channel", ""),
@@ -837,8 +860,21 @@ def build_activity(opinions, videos, limit=30):
             "blogger_slug": o.get("blogger_slug") or _to_blogger_slug(o.get("channel", "")),
             "ticker": o.get("ticker", ""),
             "sentiment": o.get("sentiment", ""),
-            "prediction_type": o.get("prediction", {}).get("type", ""),
-        })
+            "prediction_type": pred_type,
+            "prediction_price": pred.get("price"),
+            "target_price": pred.get("target_price"),
+        }
+        current = dedup_map.get(key)
+        if not current:
+            dedup_map[key] = candidate
+            continue
+        cur_type = current.get("prediction_type", "")
+        if type_priority.get(pred_type, 0) > type_priority.get(cur_type, 0):
+            dedup_map[key] = candidate
+
+    # 控制 activity 里观点事件数量，避免挤占视频动态
+    opinion_events = sorted(dedup_map.values(), key=lambda x: x.get("date", ""), reverse=True)[:12]
+    events.extend(opinion_events)
 
     events.sort(key=lambda x: x.get("date", ""), reverse=True)
     return events[:limit]

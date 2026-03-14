@@ -8,9 +8,10 @@ import dataRaw from '../../public/data/dashboard.json';
 const data = dataRaw as unknown as DashboardData;
 const { stats, activity, tickers, videos, opinions } = data;
 
-const topTickers = [...tickers]
+// Ticker tape: all tickers with price data, sorted by opinion count
+const tickerTape = [...tickers]
+  .filter(t => t.price_data?.length > 0)
   .sort((a, b) => b.active_opinions - a.active_opinions)
-  .slice(0, 14)
   .map(t => {
     const series = t.price_data || [];
     const last = series.length > 0 ? series[series.length - 1].close : null;
@@ -18,9 +19,11 @@ const topTickers = [...tickers]
     const delta7d = (last != null && prev != null && prev !== 0)
       ? ((last - prev) / prev) * 100
       : null;
-    return { ...t, lastClose: last, delta7d };
+    const ws = t.consensus.weighted_sentiment;
+    return { ticker: t.ticker, lastClose: last, delta7d, ws, opinions: t.active_opinions };
   });
 
+// Verification stats
 const verifiable = opinions.filter(o => !['reference_only', 'stop_loss'].includes(o.prediction?.type));
 const verified30 = verifiable.filter(o => {
   const r = o.verification?.snapshots?.['30d']?.result;
@@ -35,6 +38,7 @@ const verified180 = verifiable.filter(o => {
   return r === 'win' || r === 'loss';
 }).length;
 
+// Active channels
 const channelCounts = opinions.reduce((acc, o) => {
   const ch = o.channel || '';
   if (!ch) return acc;
@@ -43,9 +47,14 @@ const channelCounts = opinions.reduce((acc, o) => {
 }, {} as Record<string, number>);
 const topChannels = Object.entries(channelCounts)
   .sort((a, b) => b[1] - a[1])
-  .slice(0, 5);
+  .slice(0, 6);
+
+const dateRangeLabel = stats.date_range.start && stats.date_range.end
+  ? `${stats.date_range.start.slice(5)} → ${stats.date_range.end.slice(5)}`
+  : '—';
 ---
-<DashboardLayout title="概览 — YTNotes" current="/">
+<DashboardLayout title="概览 — 美股风向标" current="/">
+  <!-- Header -->
   <div class="mb-6">
     <h1 class="text-2xl font-semibold mb-1">概览</h1>
     <p class="text-[13px]" style="color:var(--color-text-muted);">
@@ -54,94 +63,169 @@ const topChannels = Object.entries(channelCounts)
   </div>
 
   <!-- Stat Cards -->
-  <div class="grid grid-cols-12 gap-4 mb-8 items-start">
-    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="视频" value={stats.total_videos} /></div>
-    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="频道" value={stats.total_channels} /></div>
-    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="观点" value={stats.total_opinions} color="var(--color-amber)" /></div>
-    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="标的" value={stats.total_tickers} /></div>
-    <div class="col-span-6 md:col-span-4 xl:col-span-2">
-      <StatCard label="已验证(全窗口)" value={`${stats.verified_count}/${stats.verifiable_opinions}`}
-                sub={`${stats.pending_count} 待验证`} />
+  <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 mb-6 items-start">
+    <div><StatCard label="视频" value={stats.total_videos} /></div>
+    <div><StatCard label="频道" value={stats.total_channels} /></div>
+    <div><StatCard label="观点" value={stats.total_opinions} color="var(--color-amber)" /></div>
+    <div><StatCard label="标的" value={stats.total_tickers} /></div>
+    <div><StatCard label="数据跨度" value={dateRangeLabel} /></div>
+  </div>
+
+  <!-- Ticker Tape -->
+  <div class="card-flush mb-8">
+    <div class="px-5 pt-4 pb-1">
+      <div class="section-title">Ticker 快览</div>
     </div>
-    <div class="col-span-6 md:col-span-4 xl:col-span-2">
-      <StatCard label="数据跨度" value={stats.date_range.start ? stats.date_range.start.slice(5) : '—'}
-                sub={stats.date_range.end ? `至 ${stats.date_range.end.slice(5)}` : ''} />
+    <div class="px-4 pb-4">
+      <div class="ticker-tape">
+      {tickerTape.map(t => {
+        const deltaColor = t.delta7d == null ? 'var(--color-text-muted)'
+          : t.delta7d >= 0 ? 'var(--color-green)' : 'var(--color-red)';
+        const sentDot = t.ws > 0.2 ? 'dot-bull' : t.ws < -0.2 ? 'dot-bear' : 'dot-neutral';
+        return (
+          <a href={`/tickers/${t.ticker}/`} class="tape-chip">
+            <span class={`tape-dot ${sentDot}`} />
+            <span class="font-data tape-sym">{t.ticker}</span>
+            {t.lastClose != null && (
+              <span class="font-data tape-price">${t.lastClose.toFixed(1)}</span>
+            )}
+            <span class="font-data tape-delta" style={`color:${deltaColor};`}>
+              {t.delta7d == null ? '—' : `${t.delta7d >= 0 ? '+' : ''}${t.delta7d.toFixed(1)}%`}
+            </span>
+          </a>
+        );
+      })}
+      </div>
     </div>
   </div>
 
+  <!-- Two-column layout -->
   <div class="grid grid-cols-12 gap-6 items-start">
-    <!-- Activity Timeline -->
-    <div class="col-span-12 xl:col-span-7 card-flush">
+    <!-- Left: Activity Feed -->
+    <div class="col-span-12 xl:col-span-8 card-flush">
       <div class="px-5 pt-4 pb-3">
         <div class="section-title">最近动态</div>
       </div>
-      <ActivityFeed client:load activity={activity} videos={videos} opinions={opinions} maxHeight="min(72vh, 980px)" />
+      <ActivityFeed client:load activity={activity} videos={videos} opinions={opinions} />
     </div>
 
-    <!-- Top Tickers -->
-    <div class="col-span-12 md:col-span-7 xl:col-span-3 card">
-      <div class="section-title">热门标的</div>
-      <div class="space-y-2.5">
-        {topTickers.map((t, i) => {
-          const maxCount = topTickers[0]?.active_opinions || 1;
-          const pct = (t.active_opinions / maxCount) * 100;
-          const ws = t.consensus.weighted_sentiment;
-          const barColor = ws > 0.2 ? 'var(--color-green)' : ws < -0.2 ? 'var(--color-red)' : 'var(--color-text-muted)';
-          const deltaColor = t.delta7d == null ? 'var(--color-text-muted)' : t.delta7d >= 0 ? 'var(--color-green)' : 'var(--color-red)';
-          return (
-            <a href={`/tickers/${t.ticker}/`} class="group block rounded-md px-2 py-1.5 hover:bg-[var(--color-surface-hover)] transition-colors">
-              <div class="flex items-center gap-2">
-                <span class="font-data text-[11px] w-4 text-right" style="color:var(--color-text-muted);">{i + 1}</span>
-                <span class="font-data text-[13px] w-14 group-hover:text-[var(--color-accent)] transition-colors">{t.ticker}</span>
-                <div class="flex-1 h-1.5 rounded-full overflow-hidden" style="background:var(--color-border);">
-                  <div class="h-full rounded-full transition-all" style={`width:${pct}%;background:${barColor};opacity:0.7;`} />
-                </div>
-                <span class="font-data text-[11px] w-6 text-right" style="color:var(--color-text-muted);">{t.active_opinions}</span>
-              </div>
-              <div class="mt-1 ml-6 flex items-center gap-3 text-[11px]">
-                <span class="font-data" style="color:var(--color-text-secondary);">
-                  {t.lastClose != null ? `$${t.lastClose.toFixed(2)}` : '—'}
-                </span>
-                <span class="font-data" style={`color:${deltaColor};`}>
-                  {t.delta7d == null ? '7d —' : `7d ${t.delta7d >= 0 ? '+' : ''}${t.delta7d.toFixed(1)}%`}
-                </span>
-              </div>
-            </a>
-          );
-        })}
-      </div>
-    </div>
-
-    <div class="col-span-12 md:col-span-5 xl:col-span-2 space-y-4">
+    <!-- Right sidebar -->
+    <div class="col-span-12 xl:col-span-4 flex flex-col gap-5">
+      <!-- Active Channels -->
       <div class="card">
-        <div class="section-title">回验进度</div>
-        <div class="space-y-2 text-[12px]">
-          <div class="flex items-center justify-between">
-            <span style="color:var(--color-text-muted);">30d</span>
-            <span class="font-data">{verified30}/{verifiable.length}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <span style="color:var(--color-text-muted);">90d</span>
-            <span class="font-data">{verified90}/{verifiable.length}</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <span style="color:var(--color-text-muted);">180d</span>
-            <span class="font-data">{verified180}/{verifiable.length}</span>
-          </div>
+        <div class="section-title mb-3">活跃频道</div>
+        <div class="space-y-2.5">
+          {topChannels.map(([channel, count]) => {
+            const maxCount = topChannels[0]?.[1] || 1;
+            const pct = (count / maxCount) * 100;
+            return (
+              <div class="flex items-center gap-3">
+                <span class="truncate text-[12px] w-[140px] shrink-0" style="color:var(--color-text-secondary);">{channel}</span>
+                <div class="flex-1 h-1 rounded-full overflow-hidden" style="background:var(--color-border);">
+                  <div class="h-full rounded-full" style={`width:${pct}%;background:var(--color-accent);opacity:0.5;`} />
+                </div>
+                <span class="font-data text-[11px] w-5 text-right shrink-0" style="color:var(--color-text-muted);">{count}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
+      <!-- Verification Progress -->
       <div class="card">
-        <div class="section-title">活跃频道</div>
-        <div class="space-y-2 text-[12px]">
-          {topChannels.map(([channel, count]) => (
-            <div class="flex items-center justify-between gap-2">
-              <span class="truncate" style="color:var(--color-text-secondary);">{channel}</span>
-              <span class="font-data shrink-0" style="color:var(--color-text);">{count}</span>
-            </div>
-          ))}
+        <div class="section-title mb-3">回验进度</div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="verify-box">
+            <div class="verify-label">30d</div>
+            <div class="font-data verify-val">{verified30}<span class="verify-total">/{verifiable.length}</span></div>
+          </div>
+          <div class="verify-box">
+            <div class="verify-label">90d</div>
+            <div class="font-data verify-val">{verified90}<span class="verify-total">/{verifiable.length}</span></div>
+          </div>
+          <div class="verify-box">
+            <div class="verify-label">180d</div>
+            <div class="font-data verify-val">{verified180}<span class="verify-total">/{verifiable.length}</span></div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 </DashboardLayout>
+
+<style>
+  /* ── Ticker Tape ── */
+  .ticker-tape {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    padding: 4px 0;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .ticker-tape::-webkit-scrollbar { display: none; }
+
+  .tape-chip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    white-space: nowrap;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s;
+    flex-shrink: 0;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+  }
+  .tape-chip:hover {
+    background: var(--color-surface-hover);
+  }
+
+  .tape-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-bull { background: var(--color-green); }
+  .dot-bear { background: var(--color-red); }
+  .dot-neutral { background: var(--color-text-muted); }
+
+  .tape-sym {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-text);
+  }
+  .tape-price {
+    font-size: 11px;
+    color: var(--color-text-muted);
+  }
+  .tape-delta {
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  /* ── Verify boxes ── */
+  .verify-box {
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-hover);
+    padding: 10px 12px;
+  }
+  .verify-label {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    margin-bottom: 4px;
+  }
+  .verify-val {
+    font-size: 14px;
+    color: var(--color-text);
+  }
+  .verify-total {
+    font-size: 11px;
+    color: var(--color-text-muted);
+  }
+</style>

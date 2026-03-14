@@ -14,7 +14,7 @@ export default function ActivityFeed({
   activity,
   videos,
   opinions,
-  maxHeight = 'min(72vh, 980px)',
+  maxHeight,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
@@ -40,11 +40,16 @@ export default function ActivityFeed({
   };
 
   return (
-    <div style={{ maxHeight, overflowY: 'auto' }}>
+    <div style={maxHeight ? { maxHeight, overflowY: 'auto' } : undefined}>
       {activity.map((event, i) => {
         const isOpen = expanded.has(i);
         const video = event.video_id ? videoMap.get(event.video_id) : undefined;
         const opinion = findOpinion(event);
+        const eventBloggerSlug = event.blogger_slug || toAnalystSlug(event.analyst || event.channel);
+        const eventTypeLabel = event.prediction_type ? (typeLabels[event.prediction_type] || event.prediction_type) : '';
+        const eventPrice = typeof event.prediction_price === 'number'
+          ? event.prediction_price
+          : (typeof event.target_price === 'number' ? event.target_price : null);
 
         return (
           <div key={i}
@@ -76,7 +81,7 @@ export default function ActivityFeed({
               <div style={{ flex: 1, minWidth: 0 }}>
                 {/* Channel — links to blogger page */}
                 <a
-                  href={`/bloggers/${event.blogger_slug || toAnalystSlug(event.analyst || event.channel)}/`}
+                  href={`/bloggers/${eventBloggerSlug}/`}
                   className="data-link"
                   style={{ fontSize: 12, color: 'var(--color-text-muted)' }}
                   onClick={e => e.stopPropagation()}
@@ -99,6 +104,14 @@ export default function ActivityFeed({
                     }`}>{event.ticker}</span>
                     {event.analyst && (
                       <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{event.analyst}</span>
+                    )}
+                    {eventTypeLabel && (
+                      <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{eventTypeLabel}</span>
+                    )}
+                    {eventPrice != null && (
+                      <span className="font-data" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        ${eventPrice.toFixed(1)}
+                      </span>
                     )}
                   </div>
                 )}
