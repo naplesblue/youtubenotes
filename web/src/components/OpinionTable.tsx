@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-table';
 import type { Opinion } from '../lib/types';
 import { typeLabels, directionLabels, confidenceLabels, horizonLabels } from '../lib/colors';
+import { toAnalystSlug } from '../lib/analystSlug';
 
 interface Props {
   opinions: Opinion[];
@@ -37,7 +38,7 @@ export default function OpinionTable({ opinions, showChannel = false }: Props) {
         accessorKey: 'analyst',
         header: '分析师',
         cell: ({ row }) => (
-          <a href={`/bloggers/${encodeURIComponent(row.original.analyst)}/`}
+          <a href={`/bloggers/${toAnalystSlug(row.original.analyst)}/`}
              className="text-blue-400 hover:text-blue-300 text-sm">
             {row.original.analyst}
           </a>

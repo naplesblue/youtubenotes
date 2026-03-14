@@ -3,6 +3,7 @@ import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import SentimentChart from '../../components/SentimentChart.tsx';
 import OpinionTable from '../../components/OpinionTable.tsx';
 import type { DashboardData } from '../../lib/types';
+import { toAnalystSlug } from '../../lib/analystSlug';
 
 import dataRaw from '../../../public/data/dashboard.json';
 const data = dataRaw as unknown as DashboardData;
@@ -10,20 +11,21 @@ const data = dataRaw as unknown as DashboardData;
 export function getStaticPaths() {
   const d = dataRaw as unknown as DashboardData;
   return d.bloggers.map(b => ({
-    params: { analyst: b.analyst },
+    params: { analyst: toAnalystSlug(b.analyst) },
     props: { blogger: b },
   }));
 }
 
 const { blogger } = Astro.props;
+const analystName = blogger.analyst;
 ---
-<DashboardLayout title={`${blogger.analyst} — YTNotes Dashboard`} current="/bloggers/">
+<DashboardLayout title={`${analystName} — YTNotes Dashboard`} current="/bloggers/">
   <div class="mb-6">
     <a href="/bloggers/" class="text-sm text-slate-500 hover:text-slate-300">← 博主排行</a>
   </div>
 
   <div class="flex items-baseline gap-4 mb-6">
-    <h1 class="text-2xl font-bold">{blogger.analyst}</h1>
+    <h1 class="text-2xl font-bold">{analystName}</h1>
     <span class="text-slate-400">{blogger.channel}</span>
   </div>
 

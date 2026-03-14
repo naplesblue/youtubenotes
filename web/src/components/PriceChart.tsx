@@ -12,35 +12,42 @@ export default function PriceChart({ ticker }: Props) {
     return <div className="text-slate-500 text-sm py-8 text-center">暂无行情数据</div>;
   }
 
-  // Merge price data with opinion markers
-  const markersByDate = new Map<string, typeof ticker.opinion_markers>();
-  for (const m of ticker.opinion_markers) {
-    if (!markersByDate.has(m.date)) markersByDate.set(m.date, []);
-    markersByDate.get(m.date)!.push(m);
+  const chartData = ticker.price_data
+    .map(p => ({
+      date: p.date,
+      close: Number(p.close),
+    }))
+    .filter(d => Number.isFinite(d.close))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (chartData.length === 0) {
+    return <div className="text-slate-500 text-sm py-8 text-center">暂无有效行情数据</div>;
   }
 
-  const chartData = ticker.price_data.map(p => ({
-    date: p.date,
-    close: p.close,
-    label: p.date.slice(5),
-  }));
-
   // Scatter data for opinion markers — map to nearest trading day
-  const tradingDates = new Set(ticker.price_data.map(p => p.date));
-  const priceByDate = new Map(ticker.price_data.map(p => [p.date, p.close]));
+  const tradingDates = chartData.map(p => p.date);
+  const priceByDate = new Map(chartData.map(p => [p.date, p.close]));
+
+  const nearestTradingDate = (d: string): string | null => {
+    if (!d || tradingDates.length === 0) return null;
+    if (priceByDate.has(d)) return d;
+    for (let i = tradingDates.length - 1; i >= 0; i--) {
+      if (tradingDates[i] <= d) return tradingDates[i];
+    }
+    return tradingDates[0];
+  };
 
   const scatterData = ticker.opinion_markers
-    .filter(m => {
-      // Find nearest trading day
-      return priceByDate.has(m.date) || tradingDates.size > 0;
-    })
     .map(m => {
-      const price = priceByDate.get(m.date) ?? m.price_at_publish ?? m.price;
-      if (price == null) return null;
+      const date = nearestTradingDate(m.date);
+      if (!date) return null;
+      const rawPrice = priceByDate.get(date)
+        ?? (m.price_at_publish != null ? Number(m.price_at_publish) : null)
+        ?? (m.price != null ? Number(m.price) : null);
+      if (rawPrice == null || !Number.isFinite(rawPrice)) return null;
       return {
-        date: m.date,
-        markerPrice: price,
-        label: m.date.slice(5),
+        date,
+        markerPrice: rawPrice,
         analyst: m.analyst,
         sentiment: m.sentiment,
         type: m.type,
@@ -48,9 +55,18 @@ export default function PriceChart({ ticker }: Props) {
         targetPrice: m.target_price,
       };
     })
-    .filter(Boolean);
+    .filter((d): d is {
+      date: string;
+      markerPrice: number;
+      analyst: string;
+      sentiment: string;
+      type: string;
+      direction: string;
+      targetPrice: number | null;
+    } => d !== null)
+    .sort((a, b) => a.date.localeCompare(b.date));
 
-  const allPrices = chartData.map(d => d.close).filter(Boolean);
+  const allPrices = chartData.map(d => d.close).filter(v => Number.isFinite(v));
   const minPrice = Math.min(...allPrices) * 0.95;
   const maxPrice = Math.max(...allPrices) * 1.05;
 
@@ -59,10 +75,11 @@ export default function PriceChart({ ticker }: Props) {
       <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
         <XAxis
-          dataKey="label"
+          dataKey="date"
           tick={{ fill: '#64748b', fontSize: 11 }}
           tickLine={false}
           interval="preserveStartEnd"
+          tickFormatter={(v: string) => (typeof v === 'string' && v.length >= 10 ? v.slice(5) : String(v))}
         />
         <YAxis
           domain={[minPrice, maxPrice]}
@@ -73,7 +90,11 @@ export default function PriceChart({ ticker }: Props) {
         <Tooltip
           contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
           labelStyle={{ color: '#94a3b8' }}
-          formatter={(value: number) => [`$${value.toFixed(2)}`, '收盘价']}
+          labelFormatter={(label: string) => (typeof label === 'string' ? label : String(label))}
+          formatter={(value: number | string) => {
+            const n = Number(value);
+            return Number.isFinite(n) ? [`$${n.toFixed(2)}`, '收盘价'] : [String(value), '收盘价'];
+          }}
         />
         <Line
           type="monotone"
@@ -81,6 +102,8 @@ export default function PriceChart({ ticker }: Props) {
           stroke="#3b82f6"
           strokeWidth={2}
           dot={false}
+          connectNulls
+          isAnimationActive={false}
           activeDot={{ r: 4, fill: '#3b82f6' }}
         />
         {scatterData.length > 0 && (
@@ -88,6 +111,7 @@ export default function PriceChart({ ticker }: Props) {
             data={scatterData}
             dataKey="markerPrice"
             fill="#f59e0b"
+            isAnimationActive={false}
             shape={(props: any) => {
               const { cx, cy, payload } = props;
               const color = payload.sentiment?.includes('bullish') ? '#22c55e'

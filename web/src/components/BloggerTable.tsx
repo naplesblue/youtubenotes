@@ -8,6 +8,7 @@ import {
   flexRender,
 } from '@tanstack/react-table';
 import type { Blogger } from '../lib/types';
+import { toAnalystSlug } from '../lib/analystSlug';
 
 interface Props {
   bloggers: Blogger[];
@@ -23,7 +24,7 @@ export default function BloggerTable({ bloggers }: Props) {
       accessorKey: 'analyst',
       header: '博主',
       cell: ({ row }) => (
-        <a href={`/bloggers/${encodeURIComponent(row.original.analyst)}/`}
+        <a href={`/bloggers/${toAnalystSlug(row.original.analyst)}/`}
            className="text-blue-400 hover:text-blue-300 font-medium">
           {row.original.analyst}
         </a>

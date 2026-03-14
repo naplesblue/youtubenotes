@@ -3,6 +3,7 @@ import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import PriceChart from '../../components/PriceChart.tsx';
 import OpinionTable from '../../components/OpinionTable.tsx';
 import type { DashboardData, Ticker, Opinion } from '../../lib/types';
+import { toAnalystSlug } from '../../lib/analystSlug';
 
 import dataRaw from '../../../public/data/dashboard.json';
 const data = dataRaw as unknown as DashboardData;
@@ -87,7 +88,7 @@ const wsLabel = ws > 0.2 ? '偏多' : ws < -0.2 ? '偏空' : '中性';
             : a.sentiment.includes('bearish') ? 'border-red-500/30 bg-red-500/5'
             : 'border-slate-700 bg-slate-800/50';
           return (
-            <a href={`/bloggers/${encodeURIComponent(a.analyst)}/`}
+            <a href={`/bloggers/${toAnalystSlug(a.analyst)}/`}
                class={`rounded-lg border px-4 py-2 hover:scale-105 transition-transform ${cls}`}>
               <div class="font-medium text-sm">{a.analyst}</div>
               <div class="text-xs text-slate-400">{a.channel}</div>

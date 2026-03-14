@@ -14,6 +14,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = PROJECT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+try:
+    from ytbnotes.common.ticker_normalizer import (
+        market_ticker_candidates,
+        normalize_ticker_symbol,
+    )
+except Exception:
+    def market_ticker_candidates(raw_ticker: str, company_name: str = "") -> list[str]:
+        t = (raw_ticker or "").strip().upper()
+        return [t] if t else []
+
+    def normalize_ticker_symbol(raw_ticker: str, company_name: str = "") -> str:
+        return (raw_ticker or "").strip().upper()
 
 # ── 输入路径 ─────────────────────────────────────────────────────────────────
 OPINIONS_PATH = PROJECT_DIR / "data" / "opinions" / "opinions.json"
@@ -28,6 +44,16 @@ OUTPUT_DIR = PROJECT_DIR / "web" / "public" / "data"
 OUTPUT_PATH = OUTPUT_DIR / "dashboard.json"
 
 NON_VERIFIABLE_TYPES = {"reference_only", "stop_loss"}
+GENERIC_ANALYST_NAMES = {"", "unknown", "发言人", "主播", "host", "analyst"}
+ANALYST_ALIASES_BY_CHANNEL = {
+    "视野环球财经": {
+        "RINO": "犀牛 Rihno",
+        "RENO": "犀牛 Rihno",
+        "发言人": "犀牛 Rihno",
+        "Sunny": "犀牛 Rihno",
+        "犀牛": "犀牛 Rihno",
+    }
+}
 
 
 def load_json(path: Path):
@@ -107,6 +133,153 @@ def load_video_results() -> list[dict]:
                     "key_points": data.get("key_points", [])[:3],
                 })
     return videos
+
+
+def _safe_float(value):
+    if value is None:
+        return None
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if v != v:
+        return None
+    return v
+
+
+def _median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    vals = sorted(values)
+    n = len(vals)
+    mid = n // 2
+    if n % 2:
+        return vals[mid]
+    return (vals[mid - 1] + vals[mid]) / 2.0
+
+
+def _build_channel_analyst_map(videos: list[dict], opinions: list[dict]) -> dict[str, str]:
+    host_counter: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    analyst_counter: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for v in videos:
+        ch = (v.get("channel") or "").strip()
+        host = (v.get("host") or "").strip()
+        if ch and host:
+            host_counter[ch][host] += 1
+
+    for o in opinions:
+        ch = (o.get("channel") or "").strip()
+        an = (o.get("analyst") or "").strip()
+        if ch and an:
+            analyst_counter[ch][an] += 1
+
+    result: dict[str, str] = {}
+    for ch in set(host_counter.keys()) | set(analyst_counter.keys()):
+        if host_counter.get(ch):
+            result[ch] = max(host_counter[ch].items(), key=lambda x: x[1])[0]
+            continue
+        candidates = [(name, cnt) for name, cnt in analyst_counter[ch].items()
+                      if name and name.strip().lower() not in GENERIC_ANALYST_NAMES]
+        if candidates:
+            result[ch] = max(candidates, key=lambda x: x[1])[0]
+    return result
+
+
+def _normalize_analyst_name(channel: str, analyst: str, channel_analyst_map: dict[str, str]) -> str:
+    ch = (channel or "").strip()
+    an = (analyst or "").strip()
+
+    if ch in ANALYST_ALIASES_BY_CHANNEL:
+        mapped = ANALYST_ALIASES_BY_CHANNEL[ch].get(an)
+        if mapped:
+            return mapped
+
+    if an.strip().lower() in GENERIC_ANALYST_NAMES:
+        fallback = channel_analyst_map.get(ch)
+        if fallback:
+            return fallback
+    return an or channel_analyst_map.get(ch, an)
+
+
+def _resolve_market_series(ticker: str, company_name: str, market_cache: dict[str, dict]) -> dict:
+    keys = []
+    canonical = normalize_ticker_symbol(ticker, company_name)
+    if canonical:
+        keys.append(canonical)
+    keys.append((ticker or "").strip().upper())
+    for c in market_ticker_candidates(ticker, company_name):
+        keys.append(c)
+
+    seen = set()
+    best_key = None
+    best_len = -1
+    for k in keys:
+        k = (k or "").strip().upper()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        series = market_cache.get(k)
+        if isinstance(series, dict) and len(series) > best_len:
+            best_len = len(series)
+            best_key = k
+    return market_cache.get(best_key, {}) if best_key else {}
+
+
+def _filtered_price_means(tk_opinions: list[dict], latest_close: float | None) -> tuple[float | None, float | None]:
+    target_vals = []
+    support_vals = []
+    refs = []
+
+    for o in tk_opinions:
+        pred = o.get("prediction", {}) or {}
+        ptype = pred.get("type")
+
+        price_at_pub = _safe_float(o.get("price_at_publish"))
+        if price_at_pub and 0 < price_at_pub < 2_000_000:
+            refs.append(price_at_pub)
+
+        t = _safe_float(pred.get("target_price"))
+        if t and t > 0:
+            target_vals.append(t)
+
+        p = _safe_float(pred.get("price"))
+        if p and p > 0 and ptype in ("support", "entry_zone"):
+            support_vals.append(p)
+
+    if latest_close and latest_close > 0:
+        refs.append(latest_close)
+
+    ref_price = _median(refs)
+    if ref_price:
+        min_allowed = max(0.01, ref_price * 0.05)
+        max_allowed = max(ref_price * 20.0, ref_price + 50.0)
+    else:
+        min_allowed = 0.01
+        max_allowed = 2_000_000.0
+
+    def keep(vals: list[float]) -> list[float]:
+        return [v for v in vals if min_allowed <= v <= max_allowed]
+
+    valid_targets = keep(target_vals)
+    valid_supports = keep(support_vals)
+
+    avg_target = round(sum(valid_targets) / len(valid_targets), 2) if valid_targets else None
+    avg_support = round(sum(valid_supports) / len(valid_supports), 2) if valid_supports else None
+    return avg_target, avg_support
+
+
+def _normalize_opinions_analyst(opinions: list[dict], channel_analyst_map: dict[str, str]) -> list[dict]:
+    normalized = []
+    for o in opinions:
+        item = dict(o)
+        item["analyst"] = _normalize_analyst_name(
+            channel=item.get("channel", ""),
+            analyst=item.get("analyst", ""),
+            channel_analyst_map=channel_analyst_map,
+        )
+        normalized.append(item)
+    return normalized
 
 
 def build_stats(opinions, videos, profiles, consensus, download_history):
@@ -344,7 +517,7 @@ def build_bloggers(profiles, opinions):
     return bloggers
 
 
-def build_tickers(consensus, opinions, market_cache):
+def build_tickers(consensus, opinions, market_cache, channel_analyst_map):
     """构建 ticker 详情数据。"""
     opinions_by_ticker = defaultdict(list)
     for o in opinions:
@@ -359,15 +532,25 @@ def build_tickers(consensus, opinions, market_cache):
 
         # 获取行情数据（最近 90 天足矣）
         price_data = []
-        if ticker in market_cache:
-            for date_str, ohlc in sorted(market_cache[ticker].items()):
+        market_series = _resolve_market_series(ticker, c.get("company_name", ""), market_cache)
+        if market_series:
+            for date_str, ohlc in sorted(market_series.items()):
+                close = _safe_float(ohlc.get("close"))
+                open_ = _safe_float(ohlc.get("open"))
+                high = _safe_float(ohlc.get("high"))
+                low = _safe_float(ohlc.get("low"))
+                if close is None:
+                    continue
                 price_data.append({
                     "date": date_str,
-                    "open": ohlc.get("open"),
-                    "high": ohlc.get("high"),
-                    "low": ohlc.get("low"),
-                    "close": ohlc.get("close"),
+                    "open": open_,
+                    "high": high,
+                    "low": low,
+                    "close": close,
                 })
+
+        latest_close = price_data[-1]["close"] if price_data else None
+        avg_target, avg_support = _filtered_price_means(tk_opinions, latest_close)
 
         # 观点标记点（供叠加图用）
         opinion_markers = []
@@ -384,12 +567,33 @@ def build_tickers(consensus, opinions, market_cache):
                 "price_at_publish": o.get("price_at_publish"),
             })
 
+        consensus_view = dict(c.get("consensus", {}) or {})
+        consensus_view["avg_target_price"] = avg_target
+        consensus_view["avg_support_price"] = avg_support
+
+        top_analysts = []
+        seen_analysts = set()
+        for a in c.get("top_analysts", []):
+            channel = a.get("channel", "")
+            normalized_analyst = _normalize_analyst_name(
+                channel=channel,
+                analyst=a.get("analyst", ""),
+                channel_analyst_map=channel_analyst_map,
+            )
+            key = (channel, normalized_analyst)
+            if key in seen_analysts:
+                continue
+            seen_analysts.add(key)
+            item = dict(a)
+            item["analyst"] = normalized_analyst
+            top_analysts.append(item)
+
         tickers.append({
             "ticker": ticker,
             "company_name": c.get("company_name", ""),
             "active_opinions": c.get("active_opinions", 0),
-            "consensus": c.get("consensus", {}),
-            "top_analysts": c.get("top_analysts", []),
+            "consensus": consensus_view,
+            "top_analysts": top_analysts,
             "price_data": price_data,
             "opinion_markers": opinion_markers,
         })
@@ -487,19 +691,21 @@ def main():
     print("[6/6] 扫描 video results...")
     videos = load_video_results()
     print(f"  → {len(videos)} 个视频分析")
+    channel_analyst_map = _build_channel_analyst_map(videos, opinions)
+    opinions_normalized = _normalize_opinions_analyst(opinions, channel_analyst_map)
 
     print()
     print("聚合数据...")
 
     dashboard = {
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "stats": build_stats(opinions, videos, profiles, consensus, download_history),
-        "data_quality": build_data_quality(opinions, videos, consensus),
-        "bloggers": build_bloggers(profiles, opinions),
-        "tickers": build_tickers(consensus, opinions, market_cache),
-        "opinions": build_compact_opinions(opinions),
+        "stats": build_stats(opinions_normalized, videos, profiles, consensus, download_history),
+        "data_quality": build_data_quality(opinions_normalized, videos, consensus),
+        "bloggers": build_bloggers(profiles, opinions_normalized),
+        "tickers": build_tickers(consensus, opinions_normalized, market_cache, channel_analyst_map),
+        "opinions": build_compact_opinions(opinions_normalized),
         "videos": videos,
-        "activity": build_activity(opinions, videos),
+        "activity": build_activity(opinions_normalized, videos),
     }
 
     # 写入

@@ -10,6 +10,8 @@ import datetime
 from pathlib import Path
 from typing import Optional
 
+from ..common.ticker_normalizer import market_ticker_candidates
+
 _PROJECT_DIR = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_CACHE_DIR = _PROJECT_DIR / "data" / "opinions" / "market_cache"
 
@@ -53,38 +55,69 @@ def fetch_price_history(
         logging.error("yfinance 未安装，请执行: pip install yfinance")
         return {}
 
+    candidates = market_ticker_candidates(ticker)
+    if not candidates:
+        logging.warning(f"无效 ticker，跳过行情拉取: {ticker}")
+        return {}
+
+    for market_ticker in candidates:
+        history = _fetch_price_history_for_symbol(
+            yf=yf,
+            market_ticker=market_ticker,
+            start_date=start_date,
+            end_date=end_date,
+            cache_dir=cache_dir,
+        )
+        if history:
+            if market_ticker != ticker.upper():
+                logging.debug(f"ticker 映射行情源: {ticker} -> {market_ticker}")
+            return history
+
+    return {}
+
+
+def _fetch_price_history_for_symbol(
+    yf,
+    market_ticker: str,
+    start_date: str,
+    end_date: str,
+    cache_dir: Path | None = None,
+) -> dict[str, dict]:
     start_dt = datetime.date.fromisoformat(start_date)
     end_dt = datetime.date.fromisoformat(end_date)
 
-    # 收集涉及的年份
     years = set()
     d = start_dt
     while d <= end_dt:
         years.add(d.year)
-        d = d.replace(year=d.year + 1, month=1, day=1) if d.month == 12 and d.day == 31 else d + datetime.timedelta(days=365)
+        if d.month == 12 and d.day == 31:
+            d = d.replace(year=d.year + 1, month=1, day=1)
+        else:
+            d = d + datetime.timedelta(days=365)
     years.add(end_dt.year)
 
-    # 合并缓存
     merged: dict[str, dict] = {}
     for y in years:
-        merged.update(_load_cache(ticker, y, cache_dir))
+        merged.update(_load_cache(market_ticker, y, cache_dir))
 
-    # 检查是否缺数据
     need_fetch = False
     if not merged:
         need_fetch = True
     else:
         cached_dates = sorted(merged.keys())
-        if cached_dates[-1] < end_date:
+        earliest = cached_dates[0]
+        latest = cached_dates[-1]
+        # 仅检查 latest 会漏掉“只有近期缓存、历史区间为空”的场景
+        has_overlap = not (latest < start_date or earliest > end_date)
+        if (earliest > start_date) or (latest < end_date) or (not has_overlap):
             need_fetch = True
 
     if need_fetch:
-        logging.debug(f"yfinance: 拉取 {ticker} {start_date} → {end_date}")
+        logging.debug(f"yfinance: 拉取 {market_ticker} {start_date} → {end_date}")
         try:
-            # 多取一天以确保包含 end_date
             fetch_end = (end_dt + datetime.timedelta(days=3)).isoformat()
             df = yf.download(
-                ticker,
+                market_ticker,
                 start=start_date,
                 end=fetch_end,
                 progress=False,
@@ -92,25 +125,23 @@ def fetch_price_history(
             )
             if df is not None and not df.empty:
                 for idx, row in df.iterrows():
-                    date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
+                    date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)[:10]
                     merged[date_str] = {
-                        "open": round(float(row["Open"].iloc[0]) if hasattr(row["Open"], 'iloc') else float(row["Open"]), 2),
-                        "high": round(float(row["High"].iloc[0]) if hasattr(row["High"], 'iloc') else float(row["High"]), 2),
-                        "low": round(float(row["Low"].iloc[0]) if hasattr(row["Low"], 'iloc') else float(row["Low"]), 2),
-                        "close": round(float(row["Close"].iloc[0]) if hasattr(row["Close"], 'iloc') else float(row["Close"]), 2),
+                        "open": round(float(row["Open"].iloc[0]) if hasattr(row["Open"], "iloc") else float(row["Open"]), 2),
+                        "high": round(float(row["High"].iloc[0]) if hasattr(row["High"], "iloc") else float(row["High"]), 2),
+                        "low": round(float(row["Low"].iloc[0]) if hasattr(row["Low"], "iloc") else float(row["Low"]), 2),
+                        "close": round(float(row["Close"].iloc[0]) if hasattr(row["Close"], "iloc") else float(row["Close"]), 2),
                     }
-                # 按年份分别存缓存
                 by_year: dict[int, dict] = {}
                 for ds, vals in merged.items():
                     y = int(ds[:4])
                     by_year.setdefault(y, {})[ds] = vals
                 for y, ydata in by_year.items():
-                    _save_cache(ticker, y, ydata, cache_dir)
-                logging.debug(f"yfinance: {ticker} 获得 {len(df)} 条日K数据")
+                    _save_cache(market_ticker, y, ydata, cache_dir)
+                logging.debug(f"yfinance: {market_ticker} 获得 {len(df)} 条日K数据")
         except Exception as e:
-            logging.error(f"yfinance 拉取 {ticker} 失败: {e}")
+            logging.error(f"yfinance 拉取 {market_ticker} 失败: {e}")
 
-    # 过滤到指定区间
     return {
         ds: vals for ds, vals in sorted(merged.items())
         if start_date <= ds <= end_date
