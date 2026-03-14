@@ -10,57 +10,137 @@ const { stats, activity, tickers, videos, opinions } = data;
 
 const topTickers = [...tickers]
   .sort((a, b) => b.active_opinions - a.active_opinions)
-  .slice(0, 10);
+  .slice(0, 14)
+  .map(t => {
+    const series = t.price_data || [];
+    const last = series.length > 0 ? series[series.length - 1].close : null;
+    const prev = series.length > 6 ? series[series.length - 6].close : (series[0]?.close ?? null);
+    const delta7d = (last != null && prev != null && prev !== 0)
+      ? ((last - prev) / prev) * 100
+      : null;
+    return { ...t, lastClose: last, delta7d };
+  });
+
+const verifiable = opinions.filter(o => !['reference_only', 'stop_loss'].includes(o.prediction?.type));
+const verified30 = verifiable.filter(o => {
+  const r = o.verification?.snapshots?.['30d']?.result;
+  return r === 'win' || r === 'loss';
+}).length;
+const verified90 = verifiable.filter(o => {
+  const r = o.verification?.snapshots?.['90d']?.result;
+  return r === 'win' || r === 'loss';
+}).length;
+const verified180 = verifiable.filter(o => {
+  const r = o.verification?.snapshots?.['180d']?.result;
+  return r === 'win' || r === 'loss';
+}).length;
+
+const channelCounts = opinions.reduce((acc, o) => {
+  const ch = o.channel || '';
+  if (!ch) return acc;
+  acc[ch] = (acc[ch] || 0) + 1;
+  return acc;
+}, {} as Record<string, number>);
+const topChannels = Object.entries(channelCounts)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 5);
 ---
 <DashboardLayout title="概览 — YTNotes" current="/">
-  <div class="mb-8">
-    <h1 class="text-xl font-semibold mb-1">概览</h1>
+  <div class="mb-6">
+    <h1 class="text-2xl font-semibold mb-1">概览</h1>
     <p class="text-[13px]" style="color:var(--color-text-muted);">
       {stats.total_channels} 个频道 · {stats.total_opinions} 条观点 · {stats.total_tickers} 个标的
     </p>
   </div>
 
   <!-- Stat Cards -->
-  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-10">
-    <StatCard label="视频" value={stats.total_videos} />
-    <StatCard label="频道" value={stats.total_channels} />
-    <StatCard label="观点" value={stats.total_opinions} color="var(--color-amber)" />
-    <StatCard label="标的" value={stats.total_tickers} />
-    <StatCard label="已验证" value={`${stats.verified_count}/${stats.verifiable_opinions}`}
-              sub={`${stats.pending_count} 待验证`} />
-    <StatCard label="数据跨度" value={stats.date_range.start ? stats.date_range.start.slice(5) : '—'}
-              sub={stats.date_range.end ? `至 ${stats.date_range.end.slice(5)}` : ''} />
+  <div class="grid grid-cols-12 gap-4 mb-8 items-start">
+    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="视频" value={stats.total_videos} /></div>
+    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="频道" value={stats.total_channels} /></div>
+    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="观点" value={stats.total_opinions} color="var(--color-amber)" /></div>
+    <div class="col-span-6 md:col-span-4 xl:col-span-2"><StatCard label="标的" value={stats.total_tickers} /></div>
+    <div class="col-span-6 md:col-span-4 xl:col-span-2">
+      <StatCard label="已验证(全窗口)" value={`${stats.verified_count}/${stats.verifiable_opinions}`}
+                sub={`${stats.pending_count} 待验证`} />
+    </div>
+    <div class="col-span-6 md:col-span-4 xl:col-span-2">
+      <StatCard label="数据跨度" value={stats.date_range.start ? stats.date_range.start.slice(5) : '—'}
+                sub={stats.date_range.end ? `至 ${stats.date_range.end.slice(5)}` : ''} />
+    </div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-5 gap-6">
+  <div class="grid grid-cols-12 gap-6 items-start">
     <!-- Activity Timeline -->
-    <div class="lg:col-span-3 card-flush">
+    <div class="col-span-12 xl:col-span-7 card-flush">
       <div class="px-5 pt-4 pb-3">
         <div class="section-title">最近动态</div>
       </div>
-      <ActivityFeed client:load activity={activity} videos={videos} opinions={opinions} />
+      <ActivityFeed client:load activity={activity} videos={videos} opinions={opinions} maxHeight="min(72vh, 980px)" />
     </div>
 
     <!-- Top Tickers -->
-    <div class="lg:col-span-2 card">
+    <div class="col-span-12 md:col-span-7 xl:col-span-3 card">
       <div class="section-title">热门标的</div>
-      <div class="space-y-3">
+      <div class="space-y-2.5">
         {topTickers.map((t, i) => {
           const maxCount = topTickers[0]?.active_opinions || 1;
           const pct = (t.active_opinions / maxCount) * 100;
           const ws = t.consensus.weighted_sentiment;
           const barColor = ws > 0.2 ? 'var(--color-green)' : ws < -0.2 ? 'var(--color-red)' : 'var(--color-text-muted)';
+          const deltaColor = t.delta7d == null ? 'var(--color-text-muted)' : t.delta7d >= 0 ? 'var(--color-green)' : 'var(--color-red)';
           return (
-            <a href={`/tickers/${t.ticker}/`} class="flex items-center gap-3 group">
-              <span class="font-data text-[11px] w-4 text-right" style="color:var(--color-text-muted);">{i + 1}</span>
-              <span class="font-data text-[13px] w-14 group-hover:text-[var(--color-accent)] transition-colors">{t.ticker}</span>
-              <div class="flex-1 h-1.5 rounded-full overflow-hidden" style="background:var(--color-border);">
-                <div class="h-full rounded-full transition-all" style={`width:${pct}%;background:${barColor};opacity:0.7;`} />
+            <a href={`/tickers/${t.ticker}/`} class="group block rounded-md px-2 py-1.5 hover:bg-[var(--color-surface-hover)] transition-colors">
+              <div class="flex items-center gap-2">
+                <span class="font-data text-[11px] w-4 text-right" style="color:var(--color-text-muted);">{i + 1}</span>
+                <span class="font-data text-[13px] w-14 group-hover:text-[var(--color-accent)] transition-colors">{t.ticker}</span>
+                <div class="flex-1 h-1.5 rounded-full overflow-hidden" style="background:var(--color-border);">
+                  <div class="h-full rounded-full transition-all" style={`width:${pct}%;background:${barColor};opacity:0.7;`} />
+                </div>
+                <span class="font-data text-[11px] w-6 text-right" style="color:var(--color-text-muted);">{t.active_opinions}</span>
               </div>
-              <span class="font-data text-[11px] w-5 text-right" style="color:var(--color-text-muted);">{t.active_opinions}</span>
+              <div class="mt-1 ml-6 flex items-center gap-3 text-[11px]">
+                <span class="font-data" style="color:var(--color-text-secondary);">
+                  {t.lastClose != null ? `$${t.lastClose.toFixed(2)}` : '—'}
+                </span>
+                <span class="font-data" style={`color:${deltaColor};`}>
+                  {t.delta7d == null ? '7d —' : `7d ${t.delta7d >= 0 ? '+' : ''}${t.delta7d.toFixed(1)}%`}
+                </span>
+              </div>
             </a>
           );
         })}
+      </div>
+    </div>
+
+    <div class="col-span-12 md:col-span-5 xl:col-span-2 space-y-4">
+      <div class="card">
+        <div class="section-title">回验进度</div>
+        <div class="space-y-2 text-[12px]">
+          <div class="flex items-center justify-between">
+            <span style="color:var(--color-text-muted);">30d</span>
+            <span class="font-data">{verified30}/{verifiable.length}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span style="color:var(--color-text-muted);">90d</span>
+            <span class="font-data">{verified90}/{verifiable.length}</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span style="color:var(--color-text-muted);">180d</span>
+            <span class="font-data">{verified180}/{verifiable.length}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">活跃频道</div>
+        <div class="space-y-2 text-[12px]">
+          {topChannels.map(([channel, count]) => (
+            <div class="flex items-center justify-between gap-2">
+              <span class="truncate" style="color:var(--color-text-secondary);">{channel}</span>
+              <span class="font-data shrink-0" style="color:var(--color-text);">{count}</span>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   </div>

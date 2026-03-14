@@ -7,9 +7,15 @@ interface Props {
   activity: ActivityEvent[];
   videos: Video[];
   opinions: Opinion[];
+  maxHeight?: string;
 }
 
-export default function ActivityFeed({ activity, videos, opinions }: Props) {
+export default function ActivityFeed({
+  activity,
+  videos,
+  opinions,
+  maxHeight = 'min(72vh, 980px)',
+}: Props) {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const videoMap = new Map(videos.map(v => [v.video_id, v]));
@@ -34,7 +40,7 @@ export default function ActivityFeed({ activity, videos, opinions }: Props) {
   };
 
   return (
-    <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+    <div style={{ maxHeight, overflowY: 'auto' }}>
       {activity.map((event, i) => {
         const isOpen = expanded.has(i);
         const video = event.video_id ? videoMap.get(event.video_id) : undefined;
