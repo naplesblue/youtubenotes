@@ -27,6 +27,7 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
         total = len(ops)
 
         win_rates = {}
+        win_rate_by_regime = {}
         avg_returns = {}
         verified_count = 0
 
@@ -34,6 +35,8 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
         for window in ("30d", "90d", "180d"):
             wins = 0
             losses = 0
+            regime_wins = {"bull": 0, "bear": 0, "neutral": 0}
+            regime_losses = {"bull": 0, "bear": 0, "neutral": 0}
             returns = []
             win_returns = []
             loss_returns = []
@@ -45,6 +48,13 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
                     wins += 1
                 else:
                     losses += 1
+
+                regime = snap.regime if snap.regime in ("bull", "bear", "neutral") else "neutral"
+                if snap.result == "win":
+                    regime_wins[regime] += 1
+                else:
+                    regime_losses[regime] += 1
+
                 if snap.return_pct is not None:
                     returns.append(snap.return_pct)
                     if snap.result == "win":
@@ -58,6 +68,15 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
                 verified_count = max(verified_count, decided)
             else:
                 win_rates[window] = None
+
+            win_rate_by_regime[window] = {}
+            for regime in ("bull", "bear", "neutral"):
+                regime_decided = regime_wins[regime] + regime_losses[regime]
+                win_rate_by_regime[window][regime] = (
+                    round(regime_wins[regime] / regime_decided, 3)
+                    if regime_decided > 0
+                    else None
+                )
 
             avg_returns[window] = (
                 round(sum(returns) / len(returns), 4) if returns else None
@@ -156,6 +175,7 @@ def compute_blogger_profiles(opinions: list[Opinion]) -> list[dict]:
                 "total_opinions": total,
                 "verified_opinions": verified_count,
                 "win_rate": win_rates,
+                "win_rate_by_regime": win_rate_by_regime,
                 "avg_return": avg_returns,
                 "profit_loss_ratio": metrics_90d.get("profit_loss_ratio"),
                 "max_single_loss": metrics_90d.get("max_single_loss"),

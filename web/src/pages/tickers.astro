@@ -1,0 +1,12 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import TickerGrid from '../components/TickerGrid.tsx';
+import type { DashboardData } from '../lib/types';
+
+import dataRaw from '../../public/data/dashboard.json';
+const data = dataRaw as unknown as DashboardData;
+---
+<DashboardLayout title="Ticker 网格 — YTNotes Dashboard" current="/tickers/">
+  <h1 class="text-2xl font-bold mb-6">Ticker 网格</h1>
+  <TickerGrid client:load tickers={data.tickers} />
+</DashboardLayout>

@@ -130,3 +130,53 @@ def get_price_on_date(ticker: str, date: str, cache_dir: Path | None = None) -> 
     if not candidates:
         return None
     return history[candidates[-1]]["close"]
+
+
+def get_market_regime(
+    date: str,
+    cache_dir: Path | None = None,
+    benchmark_ticker: str = "SPY",
+    ma_window: int = 50,
+) -> str:
+    """
+    判断给定日期的市场环境：
+    - 收盘价 > ma_window 日均线 -> bull
+    - 收盘价 < ma_window 日均线 -> bear
+    - 数据不足 / 无法判断 -> neutral
+    """
+    try:
+        dt = datetime.date.fromisoformat(date)
+    except ValueError:
+        logging.warning(f"无效日期，无法判断市场环境: {date}")
+        return "neutral"
+
+    if ma_window <= 0:
+        logging.warning(f"无效均线窗口，无法判断市场环境: {ma_window}")
+        return "neutral"
+
+    # 使用足够长的自然日窗口，覆盖 50 个交易日及节假日缺口
+    lookback_days = max(ma_window * 3, 120)
+    start = (dt - datetime.timedelta(days=lookback_days)).isoformat()
+    history = fetch_price_history(benchmark_ticker, start, date, cache_dir)
+    if not history:
+        return "neutral"
+
+    closes: list[float] = []
+    for ds in sorted(history.keys()):
+        if ds > date:
+            continue
+        close = history[ds].get("close")
+        if isinstance(close, (int, float)):
+            closes.append(float(close))
+
+    if len(closes) < ma_window:
+        return "neutral"
+
+    current_close = closes[-1]
+    ma_value = sum(closes[-ma_window:]) / ma_window
+
+    if current_close > ma_value:
+        return "bull"
+    if current_close < ma_value:
+        return "bear"
+    return "neutral"

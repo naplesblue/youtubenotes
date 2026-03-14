@@ -76,11 +76,13 @@ YoutubeNotes/
 │       └── sync/            # 转换本地输出，构建 Obsidian Markdown 文件和双链
 │
 ├── tools/                   # 独立功能及运维辅助脚本
+│   ├── build_dashboard_data.py # Web 仪表盘数据聚合
 │   ├── youtube_rss.py       # 通过单个视频链接反查频道 RSS 地址（用于 channels.yaml 配置）
 │   ├── extract_cookies.py   # 从 Chrome 导出 YouTube 登录 Cookie 为 yt-dlp 可用的 Netscape 格式
 │   ├── backfill_json.py     # 将历史 Markdown 笔记中的 brief_text / raw_transcript 回填到对应 JSON（dry-run 模式默认安全）
 │   └── migrate_notes.py     # 一次性迁移脚本：将旧版 Obsidian 平铺视频笔记重整为按频道分目录 + 简报/转录分离的新结构
 ├── docs/                    # 分类说明文档
+├── web/                     # Web 静态仪表盘（Astro + React + Tailwind）
 └── data/                    # (运行时产生) JSON数据库、中间音频与分析摘要
 ```
 

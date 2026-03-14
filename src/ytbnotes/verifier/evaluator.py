@@ -9,7 +9,7 @@ import logging
 from typing import Optional
 
 from ..tracker.models import Opinion, VerificationSnapshot, NON_VERIFIABLE_TYPES
-from .market_data import fetch_price_history, get_price_on_date
+from .market_data import fetch_price_history, get_price_on_date, get_market_regime
 
 # 回验窗口（天数）
 WINDOWS = {
@@ -38,12 +38,13 @@ def _evaluate_single_window(
     pred = opinion.prediction
     start_str = opinion.published_date
     end_str = window_end.isoformat()
+    regime = get_market_regime(end_str)
 
     # 拉取窗口内行情
     history = fetch_price_history(opinion.ticker, start_str, end_str)
     if not history:
         logging.warning(f"[{opinion.opinion_id}] {window_key}: 无行情数据")
-        return VerificationSnapshot(result="pending")
+        return VerificationSnapshot(result="pending", regime=regime)
 
     # 窗口末收盘价
     sorted_dates = sorted(history.keys())
@@ -55,7 +56,7 @@ def _evaluate_single_window(
         publish_price = history[sorted_dates[0]]["close"]
 
     if publish_price is None or publish_price <= 0:
-        return VerificationSnapshot(result="pending")
+        return VerificationSnapshot(result="pending", regime=regime)
 
     return_pct = round((end_price - publish_price) / publish_price, 4)
 
@@ -70,6 +71,7 @@ def _evaluate_single_window(
         price=round(end_price, 2),
         return_pct=return_pct,
         result=result,
+        regime=regime,
     )
 
 

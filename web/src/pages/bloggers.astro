@@ -1,0 +1,14 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import BloggerTable from '../components/BloggerTable.tsx';
+import type { DashboardData } from '../lib/types';
+
+import dataRaw from '../../public/data/dashboard.json';
+const data = dataRaw as unknown as DashboardData;
+---
+<DashboardLayout title="博主排行 — YTNotes Dashboard" current="/bloggers/">
+  <h1 class="text-2xl font-bold mb-6">博主排行</h1>
+  <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
+    <BloggerTable client:load bloggers={data.bloggers} />
+  </div>
+</DashboardLayout>

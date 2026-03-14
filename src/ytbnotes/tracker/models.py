@@ -46,9 +46,15 @@ class VerificationSnapshot:
     price: Optional[float] = None
     return_pct: Optional[float] = None
     result: Optional[str] = None  # win / loss / pending / expired
+    regime: Optional[str] = None  # bull / bear / neutral
 
     def to_dict(self) -> dict:
-        return {"price": self.price, "return_pct": self.return_pct, "result": self.result}
+        return {
+            "price": self.price,
+            "return_pct": self.return_pct,
+            "result": self.result,
+            "regime": self.regime,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> VerificationSnapshot:
@@ -56,6 +62,7 @@ class VerificationSnapshot:
             price=d.get("price"),
             return_pct=d.get("return_pct"),
             result=d.get("result"),
+            regime=d.get("regime"),
         )
 
 

@@ -1,0 +1,87 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import SentimentChart from '../../components/SentimentChart.tsx';
+import OpinionTable from '../../components/OpinionTable.tsx';
+import type { DashboardData } from '../../lib/types';
+
+import dataRaw from '../../../public/data/dashboard.json';
+const data = dataRaw as unknown as DashboardData;
+
+export function getStaticPaths() {
+  const d = dataRaw as unknown as DashboardData;
+  return d.bloggers.map(b => ({
+    params: { analyst: b.analyst },
+    props: { blogger: b },
+  }));
+}
+
+const { blogger } = Astro.props;
+---
+<DashboardLayout title={`${blogger.analyst} — YTNotes Dashboard`} current="/bloggers/">
+  <div class="mb-6">
+    <a href="/bloggers/" class="text-sm text-slate-500 hover:text-slate-300">← 博主排行</a>
+  </div>
+
+  <div class="flex items-baseline gap-4 mb-6">
+    <h1 class="text-2xl font-bold">{blogger.analyst}</h1>
+    <span class="text-slate-400">{blogger.channel}</span>
+  </div>
+
+  <!-- Stats row -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
+      <div class="text-sm text-slate-400">观点总数</div>
+      <div class="text-2xl font-bold text-blue-400">{blogger.total_opinions}</div>
+    </div>
+    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
+      <div class="text-sm text-slate-400">已验证</div>
+      <div class="text-2xl font-bold text-amber-400">{blogger.verified_opinions}</div>
+    </div>
+    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
+      <div class="text-sm text-slate-400">90d 胜率</div>
+      <div class="text-2xl font-bold" style={`color:${blogger.win_rate?.['90d'] != null ? '#22c55e' : '#64748b'}`}>
+        {blogger.win_rate?.['90d'] != null ? `${(blogger.win_rate['90d']! * 100).toFixed(0)}%` : 'pending'}
+      </div>
+    </div>
+    <div class="rounded-xl p-4 border border-slate-700/50" style="background:#1e293b;">
+      <div class="text-sm text-slate-400">信誉分</div>
+      <div class="text-2xl font-bold" style={`color:${blogger.credibility_score != null ? '#f59e0b' : '#64748b'}`}>
+        {blogger.credibility_score != null ? blogger.credibility_score.toFixed(1) : '—'}
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+    <!-- Sentiment distribution -->
+    <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
+      <h2 class="text-lg font-semibold mb-3">情绪分布</h2>
+      <SentimentChart client:load distribution={blogger.sentiment_distribution} />
+    </div>
+
+    <!-- Top tickers -->
+    <div class="lg:col-span-2 rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
+      <h2 class="text-lg font-semibold mb-3">热门 Ticker</h2>
+      <div class="space-y-2">
+        {blogger.top_tickers.map(t => {
+          const maxCount = blogger.top_tickers[0]?.count || 1;
+          const pct = (t.count / maxCount) * 100;
+          return (
+            <a href={`/tickers/${t.ticker}/`} class="flex items-center gap-3 group">
+              <span class="text-sm font-mono w-14 group-hover:text-blue-400 transition-colors">{t.ticker}</span>
+              <div class="flex-1 h-4 rounded bg-slate-800 overflow-hidden">
+                <div class="h-full rounded bg-blue-500/60" style={`width:${pct}%`} />
+              </div>
+              <span class="text-xs text-slate-400 w-6 text-right">{t.count}</span>
+            </a>
+          );
+        })}
+      </div>
+    </div>
+  </div>
+
+  <!-- Opinions table -->
+  <div class="rounded-xl border border-slate-700/50 p-5" style="background:#1e293b;">
+    <h2 class="text-lg font-semibold mb-3">全部观点</h2>
+    <OpinionTable client:load opinions={blogger.opinions} />
+  </div>
+</DashboardLayout>

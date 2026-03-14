@@ -1,0 +1,19 @@
+---
+interface Props {
+  sentiment: string;
+}
+const { sentiment } = Astro.props;
+
+const config: Record<string, { label: string; classes: string }> = {
+  bullish: { label: '看多', classes: 'bg-green-500/20 text-green-400' },
+  bearish: { label: '看空', classes: 'bg-red-500/20 text-red-400' },
+  neutral: { label: '中性', classes: 'bg-slate-500/20 text-slate-400' },
+};
+
+const key = sentiment.includes('bullish') ? 'bullish'
+  : sentiment.includes('bearish') ? 'bearish' : 'neutral';
+const { label, classes } = config[key] || config.neutral;
+---
+<span class:list={['inline-block px-2 py-0.5 rounded text-xs font-medium', classes]}>
+  {label}
+</span>

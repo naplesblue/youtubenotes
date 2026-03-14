@@ -63,6 +63,23 @@ python run_pipeline.py --dry-run
 - `data/audio/`: 裁剪转置后的本地音频，用于 ASR，解析后销毁。
 - `data/results/`: JSON 元数据 和 Markdown 中间态文本，交付 Sync 层映射至 Obsidian。
 
+## Web 仪表盘
+
+独立于 Obsidian 的全景数据仪表盘（Astro + React islands + Tailwind v4 + Recharts + TanStack Table）。
+
+```bash
+# 聚合最新数据 → web/public/data/dashboard.json
+python tools/build_dashboard_data.py
+
+# 静态构建 → web/dist/（可部署 GitHub Pages）
+cd web && npm run build
+
+# 本地开发预览
+cd web && npm run dev
+```
+
+页面：概览(/) | 博主排行(/bloggers/) | 博主详情 | Ticker网格(/tickers/) | 个股详情 | 数据质量(/quality/)
+
 ## Obsidian 视觉特征
 
 渲染逻辑由 `src/ytbnotes/sync/` 包全权接管，包含：

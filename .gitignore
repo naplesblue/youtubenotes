@@ -12,3 +12,6 @@ channels.yaml
 brain/
 logs/scheduler/
 runtime/locks/
+web/public/data/
+web/node_modules/
+web/dist/

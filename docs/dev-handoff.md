@@ -29,6 +29,7 @@ YoutubeNotes/
 ├── run_tracker.py           # 预测追踪入口：提取→回验→报告(见第四章)
 ├── tools/
 │   ├── run_discovery.sh     # 频道发现&筛选编排脚本（发现→筛选→报告，可定时运行）
+│   ├── build_dashboard_data.py # Web 仪表盘数据聚合脚本（→ web/public/data/dashboard.json）
 │   ├── discover_channels.py # 候选频道发现（YouTube 搜索 + 种子频道关系链）
 │   ├── channel_screen.py    # 频道旁路快筛（Cerebras LLM 打分，低成本评估候选频道）
 │   ├── cerebras_poc.py      # Cerebras API POC 测试脚本（单文件验证）
@@ -51,6 +52,12 @@ YoutubeNotes/
 │       ├── evaluator.py     #   30d/90d/180d 窗口回验判定
 │       ├── scorer.py        #   博主胜率 + 个股共识聚合
 │       └── dashboard.py     #   Obsidian 仪表盘 Markdown 生成
+├── web/                        # Web 静态仪表盘（Astro + React）← 新增
+│   ├── astro.config.mjs        #   Astro 配置（React + Tailwind v4）
+│   ├── src/pages/              #   6 个页面：概览/博主/Ticker/数据质量 + 动态详情页
+│   ├── src/components/         #   React islands（图表/表格）+ Astro 静态组件
+│   ├── src/lib/                #   TS 类型定义 + 工具函数
+│   └── public/data/            #   dashboard.json（构建时生成，gitignore）
 ├── data/
 │   ├── subtitles/           # 字幕优先路径保存的 .txt 文件（按频道/日期/video_id.txt）
 │   ├── results/             # LLM 分析输出 JSON（按频道/日期/video_id.json）
@@ -78,6 +85,7 @@ YoutubeNotes/
 | Phase 4: 观点提取 (Cerebras) | ✅ 完成 | `tracker/` |
 | Phase 5: 行情回验 + 胜率评分 | ✅ 完成 | `verifier/` |
 | Obsidian 仪表盘 | ✅ 完成 | `verifier/dashboard.py` |
+| Web 静态仪表盘 | ✅ 完成 | `web/` + `tools/build_dashboard_data.py` |
 
 **已验证的运行效果：**
 - 19 个分析结果 → 136 条 opinions 提取（Cerebras $0.04）
@@ -235,6 +243,21 @@ python tools/channel_screen.py --dry-run "https://www.youtube.com/@SomeChannel"
 ```bash
 python tools/cerebras_poc.py data/results/老李玩钱/20260227/e6pJrGpMNfU.json
 # 对单个分析结果做 Cerebras 精标注验证
+```
+
+### Web 仪表盘
+```bash
+# 聚合最新数据 → web/public/data/dashboard.json
+python tools/build_dashboard_data.py
+
+# 本地开发预览
+cd web && npm run dev
+
+# 静态构建（输出 web/dist/，可部署 GitHub Pages）
+cd web && npm run build
+
+# 典型刷新流程：pipeline/tracker 跑完后
+python tools/build_dashboard_data.py && cd web && npm run build
 ```
 
 ---
