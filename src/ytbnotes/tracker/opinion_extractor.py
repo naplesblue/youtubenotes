@@ -55,6 +55,7 @@ RESULTS_DIR  = _PROJECT_DIR / "data" / "results"
 EXTRACT_STATE_FILE = _PROJECT_DIR / "data" / "opinions" / "extract_state.json"
 _DATE_DIR_RE = re.compile(r"^\d{8}$")
 _STATE_SCHEMA_VERSION = 1
+MAX_REASONABLE_PRICE = 2_000_000.0
 
 
 def _utc_now_iso() -> str:
@@ -410,6 +411,21 @@ def _to_optional_float(value) -> float | None:
     return None
 
 
+def _sanitize_price(value) -> float | None:
+    """价格清洗：转 float 并过滤异常值。"""
+    v = _to_optional_float(value)
+    if v is None:
+        return None
+    if v <= 0 or v > MAX_REASONABLE_PRICE:
+        return None
+    return v
+
+
+def _normalize_sentiment(sentiment) -> str:
+    s = str(sentiment or "").strip().lower()
+    return s if s in {"bullish", "bearish", "neutral"} else "neutral"
+
+
 def _normalize_enum(value, allowed: set[str], default: str) -> str:
     """标准化枚举值（大小写不敏感）。"""
     if value is None:
@@ -447,6 +463,47 @@ def _normalize_prediction_type(level_type, has_price: bool) -> str:
     if mapped in PREDICTION_TYPES:
         return mapped
     return "reference_only" if has_price else "direction_call"
+
+
+def _round_optional(value: float | None, ndigits: int = 4):
+    if value is None:
+        return None
+    return round(float(value), ndigits)
+
+
+def _opinion_semantic_key(opinion: Opinion) -> tuple:
+    pred = opinion.prediction
+    return (
+        opinion.video_id,
+        (opinion.channel or "").strip().lower(),
+        (opinion.analyst or "").strip().lower(),
+        opinion.published_date,
+        (opinion.ticker or "").strip().upper(),
+        (opinion.sentiment or "").strip().lower(),
+        pred.type,
+        pred.direction,
+        _round_optional(pred.price),
+        _round_optional(pred.target_price),
+        _round_optional(pred.stop_loss),
+        pred.horizon,
+        pred.confidence,
+    )
+
+
+def _dedupe_opinions_semantic(opinions: list[Opinion], video_id: str) -> list[Opinion]:
+    deduped: list[Opinion] = []
+    seen: set[tuple] = set()
+    dropped = 0
+    for op in opinions:
+        key = _opinion_semantic_key(op)
+        if key in seen:
+            dropped += 1
+            continue
+        seen.add(key)
+        deduped.append(op)
+    if dropped:
+        logging.info(f"[{video_id}] 语义去重: 移除 {dropped} 条重复 opinions")
+    return deduped
 
 
 def _has_direct_prediction_fields(mentioned_tickers: list) -> bool:
@@ -489,7 +546,7 @@ def _extract_opinions_direct(
                 f"[{video_id}] ticker 映射: {raw_ticker} -> {ticker}"
             )
         analyst = ticker_item.get("analyst", "")
-        sentiment = str(ticker_item.get("sentiment", "neutral")).strip().lower() or "neutral"
+        sentiment = _normalize_sentiment(ticker_item.get("sentiment", "neutral"))
 
         direction = _normalize_direction(ticker_item.get("direction"), sentiment)
         confidence = _normalize_enum(ticker_item.get("confidence"), CONFIDENCES, "medium")
@@ -504,10 +561,10 @@ def _extract_opinions_direct(
         for lv in levels:
             if not isinstance(lv, dict):
                 continue
-            price = _to_optional_float(lv.get("level", lv.get("price")))
+            price = _sanitize_price(lv.get("level", lv.get("price")))
             pred_type = _normalize_prediction_type(lv.get("type"), has_price=price is not None)
-            target_price = _to_optional_float(lv.get("target_price"))
-            stop_loss = _to_optional_float(lv.get("stop_loss"))
+            target_price = _sanitize_price(lv.get("target_price"))
+            stop_loss = _sanitize_price(lv.get("stop_loss"))
             if pred_type == "target_price" and target_price is None:
                 target_price = price
 
@@ -570,7 +627,7 @@ def _extract_opinions_direct(
                 )
             )
 
-    return opinions
+    return _dedupe_opinions_semantic(opinions, video_id=video_id)
 
 
 def extract_opinions_from_result(
@@ -668,22 +725,34 @@ def extract_opinions_from_result(
                 f"[{video_id}] ticker 映射: {raw_ticker} -> {ticker}"
             )
         analyst = ticker_item.get("analyst", "")
-        sentiment = ticker_item.get("sentiment", "neutral")
+        sentiment = _normalize_sentiment(ticker_item.get("sentiment", "neutral"))
 
         for op in ticker_item.get("opinions", []):
-            pred_type = op.get("prediction_type", "direction_call")
-            price = op.get("price")
+            price = _sanitize_price(op.get("price"))
+            pred_type = _normalize_prediction_type(
+                op.get("prediction_type", "direction_call"),
+                has_price=price is not None,
+            )
+            target_price = _sanitize_price(op.get("target_price"))
+            stop_loss = _sanitize_price(op.get("stop_loss"))
+            if pred_type == "target_price" and target_price is None:
+                target_price = price
+
+            direction = _normalize_direction(op.get("direction"), sentiment)
+            confidence = _normalize_enum(op.get("confidence"), CONFIDENCES, "medium")
+            horizon = _normalize_enum(op.get("horizon"), HORIZONS, "medium_term")
+            conviction = _normalize_enum(op.get("conviction"), CONVICTIONS, "medium")
 
             oid = make_opinion_id(video_id, ticker, pred_type, price)
             prediction = Prediction(
                 type=pred_type,
-                direction=op.get("direction", "long"),
+                direction=direction,
                 price=price,
-                target_price=op.get("target_price"),
-                stop_loss=op.get("stop_loss"),
-                confidence=op.get("confidence", "medium"),
-                conviction=op.get("conviction", "medium"),
-                horizon=op.get("horizon", "medium_term"),
+                target_price=target_price,
+                stop_loss=stop_loss,
+                confidence=confidence,
+                conviction=conviction,
+                horizon=horizon,
                 context=op.get("context", ""),
             )
 
@@ -702,6 +771,7 @@ def extract_opinions_from_result(
             )
             opinions.append(opinion)
 
+    opinions = _dedupe_opinions_semantic(opinions, video_id=video_id)
     logging.info(f"[{video_id}] 提取 {len(opinions)} 条 opinions ({len(refined)} tickers)")
     return opinions, run_meta
 

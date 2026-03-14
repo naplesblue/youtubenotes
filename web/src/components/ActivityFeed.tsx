@@ -48,13 +48,12 @@ export default function ActivityFeed({ activity, videos, opinions }: Props) {
             {/* Main row — clickable */}
             <div
               onClick={() => toggle(i)}
+              className="feed-row"
               style={{
                 display: 'flex', alignItems: 'flex-start', gap: 12,
                 padding: '12px 20px', cursor: 'pointer',
                 transition: 'background 0.15s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
               {/* Date */}
               <span className="font-data" style={{ fontSize: 11, width: 56, flexShrink: 0, paddingTop: 2, color: 'var(--color-text-muted)' }}>

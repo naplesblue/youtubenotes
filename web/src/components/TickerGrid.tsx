@@ -91,14 +91,7 @@ export default function TickerGrid({ tickers }: Props) {
                  color: 'inherit',
                  transition: 'all 0.2s',
                }}
-               onMouseEnter={e => {
-                 (e.currentTarget as HTMLElement).style.background = 'var(--color-surface-hover)';
-                 (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)';
-               }}
-               onMouseLeave={e => {
-                 (e.currentTarget as HTMLElement).style.background = 'var(--color-surface)';
-                 (e.currentTarget as HTMLElement).style.transform = 'none';
-               }}>
+               className="ticker-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
                 <span className="font-data" style={{ fontSize: 15, fontWeight: 700 }}>{t.ticker}</span>
                 <span className="font-data" style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>

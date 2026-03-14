@@ -9,7 +9,7 @@
   --color-border-hover: #333848;
   --color-text: #e2e4e9;
   --color-text-secondary: #8b8fa3;
-  --color-text-muted: #565a6e;
+  --color-text-muted: #6b7080;
   --color-accent: #6b9fff;
   --color-accent-hover: #8bb4ff;
   --color-green: #4ade80;
@@ -31,7 +31,7 @@
   --color-border-hover: #d4cfc5;
   --color-text: #2c2a25;
   --color-text-secondary: #6b6860;
-  --color-text-muted: #9c9890;
+  --color-text-muted: #7d7972;
   --color-accent: #3d7bd9;
   --color-accent-hover: #2b63b8;
   --color-green: #16a34a;
@@ -217,4 +217,16 @@ a.data-link:hover {
 .theme-toggle button.active {
   color: var(--color-accent);
   background: rgba(107, 159, 255, 0.1);
+}
+
+/* Hover states (replaces inline onMouseEnter/Leave) */
+.feed-row:hover {
+  background: var(--color-surface-hover);
+}
+.opinion-group-header:hover {
+  background: var(--color-surface-hover);
+}
+.ticker-card:hover {
+  background: var(--color-surface-hover);
+  transform: translateY(-1px);
 }

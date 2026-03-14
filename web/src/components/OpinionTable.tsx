@@ -141,12 +141,11 @@ function GroupedView({ groups, expanded, toggle, showChannel }: {
           <div key={g.analyst} style={{ borderBottom: '1px solid var(--color-border)' }}>
             {/* Group header */}
             <div onClick={() => toggle(g.analyst)}
+              className="opinion-group-header"
               style={{
                 display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0',
                 cursor: 'pointer', transition: 'background 0.15s',
               }}
-              onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
             >
               <span style={{
                 fontSize: 10, color: 'var(--color-text-muted)', width: 16, textAlign: 'center',
